@@ -19,15 +19,18 @@ def create_issue(title: str, body: str):
     r.raise_for_status()
 
 def fetch_markets(limit: int = 500):
-    # Gamma: list markets
     url = f"{GAMMA}/markets"
-    params = {"active": "true", "closed": "false", "archived": "false", "limit": str(limit)}
+    params = {
+        "active": "true",
+        "closed": "false",
+        "archived": "false",
+        "limit": str(limit),
+    }
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 
 def parse_jsonish(value):
-    """GammaはJSONを文字列で返すことがあるので吸収"""
     if value is None:
         return None
     if isinstance(value, (dict, list)):
@@ -43,24 +46,20 @@ def parse_jsonish(value):
     return None
 
 def extract_yes_no_token_ids(m: dict):
-    raw = m.get("clobTokenIds")
-    parsed = parse_jsonish(raw)
+    """
+    Gammaの clobTokenIds が dict の時もあれば JSON文字列の時もあるので両対応。
+    期待：{"YES":"...","NO":"..."} もしくは ["yesToken","noToken"] + outcomes
+    """
+    parsed = parse_jsonish(m.get("clobTokenIds"))
 
-    # 1) {"YES":"...","NO":"..."} みたいな形
     if isinstance(parsed, dict):
         keys = {str(k).upper(): v for k, v in parsed.items()}
-        yes = keys.get("YES")
-        no = keys.get("NO")
+        yes = keys.get("YES") or parsed.get("Yes") or parsed.get("yes")
+        no = keys.get("NO") or parsed.get("No") or parsed.get("no")
         if yes and no:
             return str(yes), str(no)
+        return None, None
 
-        # {"Yes": "...", "No": "..."} 等も吸収
-        yes = parsed.get("Yes") or parsed.get("yes")
-        no = parsed.get("No") or parsed.get("no")
-        if yes and no:
-            return str(yes), str(no)
-
-    # 2) ["tokenA","tokenB"] みたいな形の可能性 → outcomesで対応付け
     if isinstance(parsed, list) and len(parsed) >= 2:
         outcomes = parse_jsonish(m.get("outcomes"))
         if isinstance(outcomes, list) and len(outcomes) >= 2:
@@ -71,66 +70,70 @@ def extract_yes_no_token_ids(m: dict):
                 return str(parsed[yi]), str(parsed[ni])
             except Exception:
                 pass
-        # outcomesで判別できないなら先頭2つを返す（表示用）
+        # outcomesで判別できない場合は先頭2つを返す（表示用）
         return str(parsed[0]), str(parsed[1])
 
     return None, None
 
-def fetch_prices_bulk(token_ids):
-    # CLOB: POST /prices (BUY側の価格を取得)
-    url = f"{CLOB}/prices"
-    payload = [{"token_id": tid, "side": "BUY"} for tid in token_ids]
-    r = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+def clob_price(token_id: str) -> str:
+    # 一番確実：GET /price?token_id=...
+    r = requests.get(f"{CLOB}/price", params={"token_id": token_id}, timeout=30)
     r.raise_for_status()
-    return r.json()  # {token_id: {"BUY": "...", "SELL":"..."}}
+    j = r.json()
+    # {"price":"0.42"} の想定
+    p = j.get("price")
+    return "" if p is None else str(p)
 
 def main():
     markets = fetch_markets(500)
 
-    rows = []
-    token_ids = []
-    meta = []
-
+    picked = []
     found_with_ids = 0
+
     for m in markets:
         yes_id, no_id = extract_yes_no_token_ids(m)
         if not yes_id or not no_id:
             continue
         found_with_ids += 1
-        q = m.get("question") or m.get("title") or "(no title)"
-        slug = m.get("slug", "")
-        end_time = m.get("endDate") or ""
-        meta.append((q, slug, end_time, yes_id, no_id))
-        token_ids.extend([yes_id, no_id])
+        picked.append((m, yes_id, no_id))
+        if len(picked) >= 10:
+            break
 
-    prices_map = {}
+    rows = []
     displayed = 0
 
-    if token_ids:
-        # 重複除去してまとめて価格取得
-        uniq = list(dict.fromkeys(token_ids))
-        prices_map = fetch_prices_bulk(uniq)
+    for (m, yes_id, no_id) in picked:
+        q = m.get("question") or m.get("title") or "(no title)"
+        slug = m.get("slug", "")
+        end_time = m.get("endDate") or m.get("closeTime") or m.get("resolutionTime") or ""
 
-        for (q, slug, end_time, yes_id, no_id) in meta[:10]:
-            yes_buy = prices_map.get(yes_id, {}).get("BUY")
-            no_buy = prices_map.get(no_id, {}).get("BUY")
-            prices = f"YES(BUY): {yes_buy} | NO(BUY): {no_buy}"
-            rows.append(
-                f"- {q}\n"
-                f"  {prices}\n"
-                f"  slug: {slug}\n"
-                f"  time: {end_time}\n"
-                f"  yes_token_id: {yes_id}\n"
-                f"  no_token_id: {no_id}"
-            )
-            displayed += 1
+        try:
+            yes_px = clob_price(yes_id)
+        except Exception:
+            yes_px = "ERR"
+        try:
+            no_px = clob_price(no_id)
+        except Exception:
+            no_px = "ERR"
+
+        rows.append(
+            f"- {q}\n"
+            f"  YES: {yes_px} | NO: {no_px}\n"
+            f"  slug: {slug}\n"
+            f"  time: {end_time}\n"
+            f"  yes_token_id: {yes_id}\n"
+            f"  no_token_id: {no_id}"
+        )
+        displayed += 1
 
     now = datetime.datetime.utcnow().isoformat() + "Z"
     body = (
         f"Fetched {len(markets)} markets (active & not-closed).\n"
-        f"Found {found_with_ids} markets with clobTokenIds, displayed {displayed} with CLOB prices.\n\n"
+        f"Found {found_with_ids} markets with token ids, displayed {displayed} with CLOB prices.\n\n"
         + ("\n\n".join(rows) if rows else "(no rows)")
     )
+
+    # ここで例外を投げない。必ずIssueを書く（落ちるのが一番ダメ）
     create_issue(f"[{now}] scan 500 (markets + CLOB prices)", body)
 
 if __name__ == "__main__":
