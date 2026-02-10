@@ -3,6 +3,7 @@ import datetime
 import requests
 
 GAMMA = "https://gamma-api.polymarket.com"
+CLOB = "https://clob.polymarket.com"  # 価格はここから取る
 
 def create_issue(title: str, body: str):
     repo = os.environ["REPO"]
@@ -17,71 +18,91 @@ def create_issue(title: str, body: str):
     r.raise_for_status()
 
 def fetch_events(limit: int = 200):
-    # live寄せ：active=true & closed=false
     url = f"{GAMMA}/events"
-    params = {
-        "active": "true",
-        "closed": "false",
-        "archived": "false",
-        "limit": str(limit),
-    }
+    params = {"active": "true", "closed": "false", "archived": "false", "limit": str(limit)}
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 
-def fmt_prices(m: dict) -> str:
-    # Gammaのmarketsには outcomePrices が入ってることが多い（["0.42","0.58"]みたいな文字列配列）
-    op = m.get("outcomePrices")
-    outcomes = m.get("outcomes")
+def clob_price(token_id: str) -> str:
+    # Public: /price?token_id=...
+    r = requests.get(f"{CLOB}/price", params={"token_id": token_id}, timeout=30)
+    r.raise_for_status()
+    j = r.json()
+    # {"price":"0.42"} みたいな形式想定
+    return str(j.get("price", ""))
 
-    if not op or not isinstance(op, list) or len(op) < 2:
-        return "(no prices)"
+def get_yes_no_token_ids(m: dict):
+    # Gammaのmarketに clobTokenIds が入ってることがある
+    # 例: {"Yes": "...token...", "No": "...token..."} or {"YES":..., "NO":...}
+    ct = m.get("clobTokenIds")
+    if not ct:
+        return None, None
 
-    # outcomesがあればYES/NOを確実に対応させる
-    if isinstance(outcomes, list) and len(outcomes) == len(op):
-        pairs = list(zip(outcomes, op))
-        # YES/NOがあるならそれを優先表示
-        d = {str(k).upper(): v for k, v in pairs}
-        if "YES" in d and "NO" in d:
-            return f"YES: {d['YES']} | NO: {d['NO']}"
-        # それ以外は全部並べる
-        return " | ".join([f"{k}: {v}" for k, v in pairs])
+    if isinstance(ct, dict):
+        # キー揺れ吸収
+        keys = {str(k).upper(): v for k, v in ct.items()}
+        yes = keys.get("YES")
+        no = keys.get("NO")
+        if yes and no:
+            return str(yes), str(no)
 
-    # outcomesが無い/ズレてる場合は先頭2つをYES/NOっぽく扱う
-    return f"YES?: {op[0]} | NO?: {op[1]}"
+    # たまに配列の可能性もあるので最低限
+    return None, None
 
 def main():
     events = fetch_events(200)
 
     markets = []
     for e in events:
-        for m in e.get("markets", []) or []:
+        for m in (e.get("markets") or []):
             markets.append(m)
             if len(markets) >= 500:
                 break
         if len(markets) >= 500:
             break
 
+    # 先頭10件だけ、YES/NO価格をCLOBから引いて表示
     lines = []
-    for m in markets[:10]:  # 10件表示（多すぎるとIssueが読みにくい）
+    shown = 0
+    tried = 0
+
+    for m in markets:
+        if shown >= 10:
+            break
+        tried += 1
+
         q = m.get("question") or m.get("title") or "(no title)"
         slug = m.get("slug", "")
         end_time = m.get("endDate") or m.get("closeTime") or m.get("resolutionTime") or ""
-        prices = fmt_prices(m)
+
+        yes_id, no_id = get_yes_no_token_ids(m)
+        if not yes_id or not no_id:
+            # token idが無い市場は飛ばす
+            continue
+
+        try:
+            yes_px = clob_price(yes_id)
+            no_px = clob_price(no_id)
+            prices = f"YES: {yes_px} | NO: {no_px}"
+        except Exception as ex:
+            prices = f"(price fetch failed)"
+
         lines.append(
             f"- {q}\n"
             f"  {prices}\n"
             f"  slug: {slug}\n"
             f"  time: {end_time}"
         )
+        shown += 1
 
     now = datetime.datetime.utcnow().isoformat() + "Z"
     body = (
         f"Scanned {len(markets)} markets from active & not-closed events.\n"
-        f"Showing first {min(10, len(markets))} with YES/NO prices when available.\n\n"
+        f"Displayed {shown} markets with CLOB YES/NO prices (tried {tried}).\n\n"
         + "\n\n".join(lines)
     )
-    create_issue(f"[{now}] scan 500 (live + prices)", body)
+    create_issue(f"[{now}] scan 500 (live + CLOB prices)", body)
 
 if __name__ == "__main__":
     main()
