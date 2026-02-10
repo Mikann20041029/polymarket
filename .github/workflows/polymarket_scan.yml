@@ -1,0 +1,31 @@
+name: polymarket-scan
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Run
+        env:
+          PM_API_KEY: ${{ secrets.PM_API_KEY }}
+          PM_API_SECRET: ${{ secrets.PM_API_SECRET }}
+          PM_API_PASSPHRASE: ${{ secrets.PM_API_PASSPHRASE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: python scan.py
