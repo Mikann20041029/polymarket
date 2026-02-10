@@ -16,8 +16,6 @@ def main():
     client = ClobClient(
         host=HOST,
         key=API_KEY,
-        api_secret=API_SECRET, 
-        passphrase=PASSPHRASE,
         chain_id=CHAIN_ID,
     )
 
