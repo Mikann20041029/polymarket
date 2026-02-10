@@ -1,1 +1,2 @@
-polymarket-clob-client
+py-clob-client
+requests
