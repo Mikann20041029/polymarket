@@ -28,8 +28,6 @@ jobs:
           PM_API_PASSPHRASE: ${{ secrets.PM_API_PASSPHRASE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PM_API_KEY: ${{ secrets.PM_API_KEY }}
-          PM_API_SECRET: ${{ secrets.PM_API_SECRET }}
-          PM_API_PASSPHRASE: ${{ secrets.PM_API_PASSPHRASE }}
+          
 
         run: python scan.py
