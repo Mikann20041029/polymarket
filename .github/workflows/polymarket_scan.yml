@@ -27,7 +27,7 @@ jobs:
           PM_FUNDER: ${{ secrets.PM_FUNDER }}
           PM_SIGNATURE_TYPE: ${{ secrets.PM_SIGNATURE_TYPE }}
 
-          CLAUDE_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
           CLAUDE_MODEL: ${{ secrets.CLAUDE_MODEL }}
 
           DRY_RUN: "1"              # まずは1固定
