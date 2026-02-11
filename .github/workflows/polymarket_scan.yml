@@ -19,14 +19,14 @@ jobs:
           pip install -r requirements.txt
       - name: Run agent
         env:
-          REPO: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            REPO: ${{ github.repository }}
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            PM_PRIVATE_KEY: ${{ secrets.PM_PRIVATE_KEY }}
+            PM_FUNDER: ${{ secrets.PM_FUNDER }}
+            PM_SIGNATURE_TYPE: ${{ secrets.PM_SIGNATURE_TYPE }}
 
-          PM_L1_KEY: ${{ secrets.PM_L1_KEY }}
-          PM_FUNDER: ${{ secrets.PM_FUNDER }}
-          PM_SIGNATURE_TYPE: ${{ secrets.PM_SIGNATURE_TYPE }}
+            DRY_RUN: "1"
+            TEST_PRICE: "0.01"
+            TEST_SIZE: "0.1"
 
-          DRY_RUN: "1"
-          TEST_PRICE: "0.01"
-          TEST_SIZE: "0.1"
         run: python agent.py
