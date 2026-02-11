@@ -35,5 +35,11 @@ jobs:
           MAX_TOKENS: "500"
           MAX_ORDERS_PER_RUN: "1"
           BANKROLL_USD: "50"
-          MIN_ORDER_USD: "1"
+          MIN_USD_ORDER: "1.0"
+          EDGE_MIN: "0.08"
+          KELLY_MAX: "0.06"
+          FEE_RATE: "0.00"
+          SLIPPAGE_MAX: "0.01"
+          SPREAD_MAX: "0.03"
+          STATE_DIR: "state"
         run: python agent.py
