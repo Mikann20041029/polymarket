@@ -17,7 +17,7 @@ from py_clob_client.order_builder.constants import BUY, SELL
 
 # ============================================================================
 
-HOST = “https://clob.polymarket.com”
+HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
 GAMMA = “https://gamma-api.polymarket.com”
 
