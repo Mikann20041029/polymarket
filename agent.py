@@ -368,6 +368,13 @@ def main():
         yes_sell = float(p.get("SELL", "nan"))
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
             continue
+        crypto_data = None
+
+        if "bitcoin" in title.lower() or "btc" in title.lower():
+            crypto_data = crypto_features("bitcoin")
+
+        if crypto_data:
+            print("CRYPTO DATA:", crypto_data)
 
         fair = openai_fair_prob(title, yes_buy, yes_sell)
 
