@@ -413,9 +413,6 @@ def clob_prices(token_ids):
     return out
 
 
-mtype = classify_market_type(title)
-if mtype is None:
-    continue
 
 
 def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_context: dict | None = None) -> float:
