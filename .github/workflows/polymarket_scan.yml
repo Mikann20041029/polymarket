@@ -26,6 +26,8 @@ jobs:
 
       - name: Run agent
         env:
+          MAX_MARKETS: "20"
+
           REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ github.token }}
 
