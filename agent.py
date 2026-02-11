@@ -552,6 +552,8 @@ def main():
     evaluated = 0
     best = None  # (edge, th, title, tid, fair, buy, sell)
 
+    best = None  # (edge, th, title, tid, fair, buy, sell)
+
 
     for tid, title in picked:
         p = prices.get(tid)
@@ -571,6 +573,7 @@ def main():
 
                 # 市場タイプ判定（weather/sports/crypto）
                 # 市場タイプ判定
+                # 市場タイプ判定（weather/sports/crypto）
         mtype = classify_market_type(title)
 
         # marketごとの外部情報（weatherはタイトル依存なので都度）
@@ -591,7 +594,7 @@ def main():
         if any(k in low for k in ["bitcoin", "btc"]):
             crypto_extra = crypto_features("bitcoin")
 
-        # LLMに渡すctxは「全部入り」にする（あなたの方針通り）
+        # LLMに渡すctxは「全部入り」に統一（市場タイプで削らない）
         ctx = {
             "weather": weather_data,
             "sports": sports_data,
@@ -600,12 +603,9 @@ def main():
         if crypto_extra:
             ctx["crypto_extra"] = crypto_extra
 
-        # デバッグ（外部情報が本当に入ってるか）
-        # 例: weather:True sports:True crypto:True
-        dbg = f"ctx_flags weather={ctx.get('weather') is not None} sports={ctx.get('sports') is not None} crypto={ctx.get('crypto') is not None}"
-
         fair_prob = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
         fair = fair_prob
+
 
 
         # mispricing edge を必ず計算してから使う（ここが UnboundLocalError の根本）
