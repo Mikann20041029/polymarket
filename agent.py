@@ -1,35 +1,17 @@
+# agent.py
 import os
 import json
-import datetime
+import time
 import requests
 
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, OrderType
-from py_clob_client.order_builder.constants import BUY
-EDGE_MIN = 0.08   # 8%
-KELLY_MAX = 0.06  # bankrollの6%上限
-
-def should_trade(fair_yes_prob: float, yes_price: float):
-    # yes_price が 0 の場合は除外
-    if yes_price <= 0:
-        return False, 0.0
-    edge = (fair_yes_prob - yes_price) / yes_price
-    return edge >= EDGE_MIN, edge
-
-def kelly_fraction(edge: float, odds: float):
-    # 簡易・安全側。oddsは仮で1.0固定でも可
-    if odds <= 0:
-        return 0.0
-    f = edge / odds
-    if f < 0:
-        f = 0.0
-    if f > KELLY_MAX:
-        f = KELLY_MAX
-    return f
+from py_clob_client.constants import POLYGON
+from py_clob_client.clob_types import OrderArgs
 
 HOST = "https://clob.polymarket.com"
-CHAIN_ID = 137
 GAMMA = "https://gamma-api.polymarket.com"
+CHAIN_ID = 137  # Polygon mainnet
+
 
 def env(name: str) -> str:
     v = os.getenv(name)
@@ -37,31 +19,52 @@ def env(name: str) -> str:
         raise RuntimeError(f"missing env: {name}")
     return v
 
+
+def validate_hex(name: str, v: str, n_bytes: int):
+    if not v.startswith("0x"):
+        raise RuntimeError(f"{name} must start with 0x")
+    hexpart = v[2:]
+    if len(hexpart) != n_bytes * 2:
+        raise RuntimeError(f"{name} length wrong: expected {n_bytes} bytes (0x + {n_bytes*2} hex), got {len(hexpart)//2} bytes")
+    int(hexpart, 16)  # validate hex
+
+
 def gh_issue(title: str, body: str):
-    repo = env("REPO")
+    # これが一番安全：Actions の GITHUB_TOKEN を使う
     token = env("GITHUB_TOKEN")
+    repo = env("REPO")
+
     r = requests.post(
         f"https://api.github.com/repos/{repo}/issues",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
         json={"title": title, "body": body},
         timeout=30,
     )
     r.raise_for_status()
 
-def gamma_pick_one_token_id() -> str:
-    max_markets = int(os.getenv("MAX_MARKETS", "200"))
 
-    # enableOrderBook=true & active の市場からYES token_idを1つ拾う
+def gamma_list_markets(limit: int = 500):
     r = requests.get(
         f"{GAMMA}/markets",
-        params={"active": "true", "closed": "false", "archived": "false", "limit": "200"},
+        params={
+            "active": "true",
+            "closed": "false",
+            "archived": "false",
+            "limit": str(limit),
+        },
         timeout=30,
     )
     r.raise_for_status()
-    markets = r.json()
-    markets = markets[:max_markets]
+    return r.json()
 
 
+def pick_one_tradable_yes_token_id(markets):
+    """
+    enableOrderBook=true かつ clobTokenIds から YES の token_id を拾う。
+    """
     for m in markets:
         if not m.get("enableOrderBook", False):
             continue
@@ -69,106 +72,106 @@ def gamma_pick_one_token_id() -> str:
         v = m.get("clobTokenIds")
         if v is None:
             continue
+
+        # v が str のことも list/dict のこともあるので吸収
         if isinstance(v, str):
-            v = v.strip()
-            if not v:
+            s = v.strip()
+            if not s:
                 continue
             try:
-                v = json.loads(v)
+                v = json.loads(s)
             except Exception:
                 continue
 
-        # dict {"YES": "...", "NO": "..."} を優先
         if isinstance(v, dict):
             yes = v.get("YES") or v.get("Yes") or v.get("yes")
             if yes:
-                return str(yes)
+                return str(yes), m
 
-        # list の場合は先頭をYES扱い（outcomesが取れるなら厳密化可能）
         if isinstance(v, list) and len(v) >= 1:
-            return str(v[0])
+            return str(v[0]), m
 
     raise RuntimeError("no tradable token_id found (enableOrderBook market)")
 
+
 def main():
-    # knobs
     dry_run = os.getenv("DRY_RUN", "1") == "1"
+    max_markets = int(os.getenv("MAX_MARKETS", "500"))
 
-# 前提：ここより前で side / token_id / orderbook / balance_usd / fair_prob は取得済みにする
-# side: "BUY" or "SELL"
-# fair_prob: 0.0-1.0
-# balance_usd: float (USD)
+    # --- Secrets (GitHub Actions env) ---
+    private_key = env("PM_PRIVATE_KEY")
+    funder = env("PM_FUNDER")
 
-# --- orderbook guard ---
-    bids = orderbook.get("bids") or []
-    asks = orderbook.get("asks") or []
+    # 厳密チェック：private key は 32 bytes、funder(address) は 20 bytes
+    validate_hex("PM_PRIVATE_KEY", private_key, 32)
+    validate_hex("PM_FUNDER", funder, 20)
+
+    # --- Scan markets ---
+    markets = gamma_list_markets(limit=max_markets)
+    token_id, picked_market = pick_one_tradable_yes_token_id(markets)
+
+    # --- Build client ---
+    client = ClobClient(
+        host=HOST,
+        chain_id=CHAIN_ID,
+        private_key=private_key,
+        funder=funder,
+        signature_type=POLYGON,  # これで通る構成が多い。環境によっては不要/別指定が要る。
+    )
+
+    # --- Fetch orderbook ---
+    ob = client.get_order_book(token_id)
+    bids = ob.get("bids") or []
+    asks = ob.get("asks") or []
     if not bids or not asks:
         raise RuntimeError("orderbook empty (no bids/asks)")
 
     best_bid = float(bids[0]["price"])
     best_ask = float(asks[0]["price"])
 
-# price: BUYならask、SELLならbid
+    # ここは「外人仕様」の前段：まだ LLM の fair value 推定は入れてない（まず取引が通る土台）
+    # ひとまず最小サイズで DRY_RUN を確認
+    side = "BUY"
     price = best_ask if side == "BUY" else best_bid
+    size = float(os.getenv("TEST_SIZE", "0.1"))
 
-# payout ratio b = (1/price - 1). priceが1に近いとbが0に近づくのでガード
-    if price <= 0 or price >= 0.999999:
-        raise RuntimeError(f"invalid price for Kelly: {price}")
-
-    b = (1.0 / price) - 1.0
-    p = float(fair_prob)
-    p = max(0.0, min(1.0, p))
-    q = 1.0 - p
-
-# Kelly fraction (cap 6%)
-    raw_f = (b * p - q) / b
-    kelly_f = max(0.0, min(raw_f, 0.06))
-
-    bankroll = float(balance_usd)
-    size_usd = bankroll * kelly_f
-
-# size: 株数(シェア数)。極小を0に丸めて無駄発注を防ぐ
-    size = round(size_usd / price, 4)
-if size <= 0:
-    # 取引しない（edge不足/kellyゼロ）
-    size = 0.0
-
-    l1_key = env("PM_PRIVATE_KEY")
-    funder = env("PM_FUNDER")
-    sig_t  = int(env("PM_SIGNATURE_TYPE"))
-
-    # ---- client init (trading) ----
-    client = ClobClient(
-        HOST,
-        key=l1_key,
-        chain_id=CHAIN_ID,
-        signature_type=sig_t,
-        funder=funder,
+    # --- Build order ---
+    order_args = OrderArgs(
+        price=price,
+        size=size,
+        side=side,
+        token_id=token_id,
     )
-    # L2 creds は「既存があれば取得、なければ作成」なので env にAPIキーを持たなくても進められます
-    client.set_api_creds(client.create_or_derive_api_creds())
-
-    token_id = gamma_pick_one_token_id()
-
-    # ---- create order ----
-    order = OrderArgs(token_id=token_id, price=price, size=size, side=BUY)
-    signed = client.create_order(order)
-
-    now = datetime.datetime.utcnow().isoformat() + "Z"
 
     if dry_run:
-        gh_issue(
-            f"[{now}] DRY_RUN order built (not posted)",
-            f"token_id: {token_id}\nprice: {price}\nsize: {size}\nside: BUY\n\nResult: built+signed OK (not posted).",
-        )
+        signed = client.create_order(order_args)
+        title = f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] DRY_RUN order built (not posted)"
+        body = "\n".join([
+            f"token_id: {token_id}",
+            f"price: {price}",
+            f"size: {size}",
+            f"side: {side}",
+            "",
+            "Result: built+signed OK (not posted).",
+        ])
+        gh_issue(title, body)
         return
 
-    # ---- post order ----
-    resp = client.post_order(signed, OrderType.GTC)
-    gh_issue(
-        f"[{now}] LIVE order posted",
-        f"token_id: {token_id}\nprice: {price}\nsize: {size}\nside: BUY\norder_type: GTC\n\nresp:\n{resp}",
-    )
+    # 本番：発注
+    signed = client.create_order(order_args)
+    resp = client.post_order(signed)
+
+    title = f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] LIVE order posted"
+    body = "\n".join([
+        f"token_id: {token_id}",
+        f"price: {price}",
+        f"size: {size}",
+        f"side: {side}",
+        "",
+        f"response: {resp}",
+    ])
+    gh_issue(title, body)
+
 
 if __name__ == "__main__":
     main()
