@@ -86,37 +86,33 @@ def extract_yes_token_ids(markets, max_tokens: int):
             picked.append((tid, str(m.get("question") or m.get("title") or "unknown")))
     return token_ids, picked
 
+import requests
+
+HOST = "https://clob.polymarket.com"
+
 def chunked(xs, n):
     for i in range(0, len(xs), n):
         yield xs[i:i+n]
 
+def _prices_once(token_ids_chunk, side: str) -> dict:
+    params = [("side", side)]
+    params += [("token_ids", str(tid)) for tid in token_ids_chunk]
+
+    r = requests.get(f"{HOST}/prices", params=params, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
 def clob_prices(token_ids):
     out = {}
 
-    # 1回で投げる数は控えめに（まず50〜100が安全）
-    for chunk in chunked(token_ids, 80):
-        q = ",".join(chunk)
+    # まずは控えめに。多すぎると400になりやすいので 30〜80 で安定しやすい
+    for chunk in chunked(token_ids, 50):
+        buy = _prices_once(chunk, "BUY")
+        sell = _prices_once(chunk, "SELL")
 
-        r_buy = requests.get(
-            f"{HOST}/prices",
-            params={"token_ids": q, "side": "BUY"},
-            timeout=30,
-        )
-        r_buy.raise_for_status()
-
-        r_sell = requests.get(
-            f"{HOST}/prices",
-            params={"token_ids": q, "side": "SELL"},
-            timeout=30,
-        )
-        r_sell.raise_for_status()
-
-        buy = r_buy.json()
-        sell = r_sell.json()
-
-        # 返ってくるJSONの形に合わせてここは既存ロジックに統合
-        # 例: out[tid] = {"BUY": buy[tid], "SELL": sell[tid]}
+        # 返却形式に合わせて統合（辞書で tid -> price が返る想定）
         for tid in chunk:
+            tid = str(tid)
             out.setdefault(tid, {})
             if isinstance(buy, dict) and tid in buy:
                 out[tid]["BUY"] = buy[tid]
@@ -124,6 +120,7 @@ def clob_prices(token_ids):
                 out[tid]["SELL"] = sell[tid]
 
     return out
+
 
 
 def claude_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
