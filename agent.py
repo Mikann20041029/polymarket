@@ -142,39 +142,39 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
     prompt = (
-            You are a probability forecaster for binary events (YES/NO).
-            You MUST base your probability on the provided Evidence Pack only.
-            If evidence is insufficient or conflicting, output a conservative probability near the market price.
-            Return JSON only, following the schema exactly. No extra text.
-        Market:
-- Title: {{title}}
-- Resolution criteria: {{resolution_criteria}}
-- Deadline: {{deadline_iso}}
-- Market prices:
-  - YES best buy: {{yes_buy}}
-  - YES best sell: {{yes_sell}}
-  - NO  best buy: {{no_buy}}
-  - NO  best sell: {{no_sell}}
+                You are a probability forecaster for binary events (YES/NO).
+                You MUST base your probability on the provided Evidence Pack only.
+                If evidence is insufficient or conflicting, output a conservative probability near the market price.
+                Return JSON only, following the schema exactly. No extra text.
+                Market:
+                    - Title: {{title}}
+                    - Resolution criteria: {{resolution_criteria}}
+                    - Deadline: {{deadline_iso}}
+                    - Market prices:
+                    - YES best buy: {{yes_buy}}
+                    - YES best sell: {{yes_sell}}
+                    - NO  best buy: {{no_buy}}
+                    - NO  best sell: {{no_sell}}
 
-Evidence Pack (you must rely on these only):
-{{evidence_bullets_with_sources}}
+                    Evidence Pack (you must rely on these only):
+                    {{evidence_bullets_with_sources}}
 
-Tasks:
-1) Estimate fair probability for YES (0..1).
-2) Provide uncertainty (0..1). 0=very certain, 1=very uncertain.
-3) Provide 1-3 key reasoning bullets, each citing which evidence item(s) it uses.
-4) Provide a recommended edge threshold adjustment: if uncertainty is high, require larger edge.
+                    Tasks:
+                    1) Estimate fair probability for YES (0..1).
+                    2) Provide uncertainty (0..1). 0=very certain, 1=very uncertain.
+                    3) Provide 1-3 key reasoning bullets, each citing which evidence item(s) it uses.
+                    4) Provide a recommended edge threshold adjustment: if uncertainty is high, require larger edge.
 
-JSON schema:
-{
-  "p_yes_fair": number,
-  "uncertainty": number,
-  "reasons": [{"text": string, "evidence_ids": [string]}],
-  "edge_multiplier": number
-}
+                    JSON schema:
+                    {
+                      "p_yes_fair": number,
+                      "uncertainty": number,
+                      "reasons": [{"text": string, "evidence_ids": [string]}],
+                      "edge_multiplier": number
+                    }
 
                 
-    )
+            )
 
     r = requests.post(
         "https://api.openai.com/v1/responses",
