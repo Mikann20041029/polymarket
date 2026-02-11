@@ -608,6 +608,33 @@ def main():
             ctx["crypto"] = crypto_data
         else:
             continue
+        # 市場タイプ判定（weather/sports/crypto）
+        low = title.lower()
+        mtype = "generic"
+        if "rain" in low and re.search(r"\b\d{4}-\d{2}-\d{2}\b", title):
+            mtype = "weather"
+        elif any(k in low for k in ["nfl", "nba", "mlb", "injury", "injuries", "out for season"]):
+            mtype = "sports"
+        elif any(k in low for k in ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "on-chain"]):
+            mtype = "crypto"
+
+        # ここが重要：毎回 “全部入り” を渡す（天気だけ・cryptoだけにしない）
+        ctx = dict(external_context_base)
+
+        # 天気市場なら、その市場に紐づく天気データだけ上書きして渡す（取れないなら None のまま）
+        if mtype == "weather":
+            try:
+                q = parse_weather_question(title)
+                if q:
+                    w = fetch_open_meteo_weather(q["place"], q["date"])
+                    ctx["weather"] = w
+            except Exception as e:
+                ctx["weather"] = {"error": f"{type(e).__name__}: {e}"}
+        # デバッグ（外部情報が本当に入ってるか）
+        # 例: weather:True sports:True crypto:True
+        dbg = f"ctx_flags weather={ctx.get('weather') is not None} sports={ctx.get('sports') is not None} crypto={ctx.get('crypto') is not None}"
+
+        fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
 
         # LLM 推定（公平確率）
         fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
