@@ -182,6 +182,26 @@ def parse_weather_question(q: str):
     place = m_place.group(1).strip(" ,.")
     day = m_date.group(1)
     return {"place": place, "date": day}
+import re
+
+def classify_market_type(title: str) -> str | None:
+    t = (title or "").lower()
+
+    # weather（あなたが既に作った rain + in PLACE + YYYY-MM-DD に寄せる）
+    if "rain" in t and re.search(r"\b\d{4}-\d{2}-\d{2}\b", t) and " in " in t:
+        return "weather"
+
+    # sports（最低限の雑分類：vs / v / at が入る、または teamっぽい並び）
+    if (" vs " in t) or (" v " in t) or (" at " in t):
+        return "sports"
+
+    # crypto（キーワード雑分類：イベント系に寄せる）
+    crypto_kw = ["bitcoin", "btc", "ethereum", "eth", "sol", "solana", "etf", "sec", "cpi", "fed", "rate cut", "rate hike"]
+    if any(k in t for k in crypto_kw):
+        return "crypto"
+
+    return None
+
 
 def geocode_place(place: str):
     data, err = safe_get_json(OPEN_METEO_GEOCODE, {"name": place, "count": 1, "language": "en", "format": "json"})
@@ -249,6 +269,29 @@ GAMMA = "https://gamma-api.polymarket.com"
 
 EDGE_MIN = 0.08
 KELLY_MAX = 0.06
+def dynamic_edge_threshold(yes_buy: float, yes_sell: float) -> float:
+    """
+    板の厚みが取れない前提で、スプレッドを流動性 proxy にする。
+    - スプレッド小: 高流動性 → 閾値を下げる
+    - スプレッド大/片側欠け: 低流動性 → 閾値を上げる
+    """
+    # 価格が極端な所はノイズや約定難が増えるので、少し保守化
+    if yes_buy <= 0.03 or yes_buy >= 0.97:
+        return 0.10
+
+    if yes_sell <= 0 or yes_sell >= 1:
+        return 0.10
+
+    spread = max(0.0, yes_buy - yes_sell)
+
+    if spread <= 0.01:
+        return 0.04
+    if spread <= 0.03:
+        return 0.06
+    if spread <= 0.06:
+        return 0.08
+    return 0.10
+
 
 def env(k: str) -> str:
     v = os.getenv(k)
@@ -370,6 +413,9 @@ def clob_prices(token_ids):
     return out
 
 
+mtype = classify_market_type(title)
+if mtype is None:
+    continue
 
 
 def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_context: dict | None = None) -> float:
@@ -526,7 +572,19 @@ def main():
         if crypto_data:
             print("CRYPTO DATA:", crypto_data)
 
-        fair = openai_fair_prob(title, yes_buy, yes_sell, external_context)
+        ctx = {}
+        mtype = classify_market_type(title)
+        if mtype == "weather":
+            ctx["weather"] = weather_data
+        elif mtype == "sports":
+            ctx["sports"] = sports_data
+        elif mtype == "crypto":
+            ctx["crypto"] = crypto_data
+        else:
+            continue
+
+        fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
+
         # --- weather: タイトルが rain 市場の形式なら、外部情報として注入 ---
         weather_data = None
         wp, werr = fair_prob_weather(title)
@@ -550,7 +608,11 @@ def main():
 
     decisions.sort(reverse=True, key=lambda x: x[0])
     if not decisions:
-        gh_issue("run: no edge >= 8%", "乖離8%超が見つかりませんでした（Claude推定ベース）。")
+        gh_issue(
+            "run: no edge (dynamic threshold)",
+            f"乖離が見つかりませんでした（推定ベース）。"
+        )
+
         return
 
     # 残高（bankroll）: まずは「balance/allowance」をSDK側で参照するのが筋
