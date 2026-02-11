@@ -266,47 +266,63 @@ def clob_prices(token_ids):
 
 
 
-def openai_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
+def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_context: dict | None = None) -> float:
     api_key = env("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    prompt = (
-        "The agent must survive."
-        "It pays its own API costs from profit."
-        "If balance hits 0, the agent dies."
-        "Do not align blindly with market odds."
+    # 外部情報を安全に文字列化（Noneでも落ちない）
+    def safe_json(x):
+        try:
+            return json.dumps(x, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            return str(x)
 
-        "You estimate fair probability for a Polymarket YES/NO event.\n"
-        "Return ONLY a number between 0 and 1 as fair YES probability.\n"
+    ext = safe_json(external_context or {})
+
+    SYSTEM = (
+        "You are an autonomous prediction-market trading agent.\n"
+        "The agent must survive.\n"
+        "It pays its own API costs from profit.\n"
+        "If balance hits 0, the agent dies.\n"
+        "Do not align blindly with market odds.\n"
+        "Use external data when informative.\n"
+        "Return ONLY a number between 0 and 1.\n"
+    )
+
+    USER = (
+        "Estimate fair probability (YES) for this Polymarket event.\n"
         f"Title: {title}\n"
         f"Current YES BUY price: {yes_buy}\n"
         f"Current YES SELL price: {yes_sell}\n"
+        "\n"
+        "External context (may include weather/crypto/sports/etc):\n"
+        f"{ext}\n"
+        "\n"
+        "Output format: just a decimal number in [0,1]."
     )
 
     r = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": model,
-            "input": prompt,
-            "max_output_tokens": 16,
             "temperature": 0.0,
+            "max_tokens": 16,
+            "messages": [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": USER},
+            ],
         },
         timeout=60,
     )
     r.raise_for_status()
-
     data = r.json()
-    text = data["output"][0]["content"][0]["text"].strip()
+    text = data["choices"][0]["message"]["content"].strip()
     p = float(text)
-
     if not (0.0 <= p <= 1.0):
         raise RuntimeError(f"OpenAI returned out-of-range prob: {p}")
-
     return p
+
 
 
 
@@ -356,6 +372,11 @@ def main():
     if not token_ids:
         gh_issue("run: no tradable markets", "enableOrderBook=true の市場が見つかりませんでした。")
         return
+    external_context = {
+        "weather": weather_data if "weather_data" in globals() else None,
+        "crypto": crypto_data if "crypto_data" in globals() else None,
+        "sports": sports_data if "sports_data" in globals() else None,
+    }
 
     prices = clob_prices(token_ids)  # {tid: {"BUY": "...", "SELL": "..."}, ...}
 
@@ -376,7 +397,7 @@ def main():
         if crypto_data:
             print("CRYPTO DATA:", crypto_data)
 
-        fair = openai_fair_prob(title, yes_buy, yes_sell)
+        fair = openai_fair_prob(title, yes_buy, yes_sell, external_context)
 
         # mispricing: fair - buy_price
         edge = (fair - yes_buy) / yes_buy
