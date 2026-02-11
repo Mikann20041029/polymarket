@@ -783,7 +783,7 @@ def main():
         book = fetch_book(tid)
     except Exception:
         stats["book_fail"] += 1
-        continue
+    continue
 
 
         bids = parse_levels(book.get("bids") or [])
