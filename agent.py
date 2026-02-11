@@ -74,7 +74,7 @@ def main():
     size  = float(os.getenv("TEST_SIZE", "0.1"))
 
     # ---- secrets ----
-    l1_key = env("PM_L1_KEY")
+    l1_key = env("PM_PRIVATE_KEY")
     funder = env("PM_FUNDER")
     sig_t  = int(env("PM_SIGNATURE_TYPE"))
 
