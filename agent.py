@@ -234,7 +234,7 @@ def main():
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
             continue
 
-        fair = claude_fair_prob(title, yes_buy, yes_sell)
+        fair = openai_fair_prob(title, yes_buy, yes_sell)
 
         # mispricing: fair - buy_price
         edge = (fair - yes_buy) / yes_buy
