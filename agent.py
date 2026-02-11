@@ -4,6 +4,7 @@ import time
 import math
 from datetime import datetime, timezone
 import requests
+
 def crypto_features(symbol: str):
     try:
         # ① CoinGecko
@@ -41,6 +42,7 @@ def crypto_features(symbol: str):
     except Exception as e:
         print("crypto_features error:", e)
         return None
+
 def fetch_crypto_context() -> dict | None:
     """
     無料で取れる範囲の「オンチェーン代替 + センチメント代替」。
@@ -76,7 +78,7 @@ def fetch_crypto_context() -> dict | None:
     except Exception as e:
         out["fear_greed_error"] = f"{type(e).__name__}: {e}"
 
-    # “何も取れなかった”場合だけ None
+    # "何も取れなかった"場合だけ None
     if "coingecko" not in out and "fear_greed" not in out:
         return None
     return out
@@ -84,9 +86,9 @@ def fetch_crypto_context() -> dict | None:
 
 def fetch_sports_context() -> dict | None:
     """
-    “injury reports” をガチでやるならリーグ別に専用データソース/APIが必要です。
+    "injury reports" をガチでやるならリーグ別に専用データソース/APIが必要です。
     ここでは「まず動く最小」を置きます。
-    - まずは ESPN の公開RSS(存在するスポーツのみ)を“ニュース見出し”として取る
+    - まずは ESPN の公開RSS(存在するスポーツのみ)を"ニュース見出し"として取る
       -> injury っぽい単語を含む見出しを拾う（荒いが、ゼロよりマシ）
     取れなければ None を返す（運用を止めない）。
     """
@@ -182,6 +184,7 @@ def parse_weather_question(q: str):
     place = m_place.group(1).strip(" ,.")
     day = m_date.group(1)
     return {"place": place, "date": day}
+
 import re
 
 def classify_market_type(title: str) -> str | None:
@@ -269,6 +272,7 @@ GAMMA = "https://gamma-api.polymarket.com"
 
 EDGE_MIN = 0.08
 KELLY_MAX = 0.06
+
 def dynamic_edge_threshold(yes_buy: float, yes_sell: float) -> float:
     """
     板の厚みが取れない前提で、スプレッドを流動性 proxy にする。
@@ -524,11 +528,15 @@ def main():
         signature_type=signature_type,
         funder=funder,
     )
-    # L2 credsを導出（既存があればそれ、なければ作成） :contentReference[oaicite:5]{index=5}
+    # L2 credsを導出（既存があればそれ、なければ作成）
     client.set_api_creds(client.create_or_derive_api_creds())
 
     markets = gamma_markets(scan_markets)
     token_ids, picked = extract_yes_token_ids(markets, max_tokens)
+    
+    print(f"\n{'='*60}")
+    print(f"Starting market scan: {len(picked)} markets to evaluate")
+    print(f"{'='*60}\n")
 
     # 外部情報（取れなくても運用は止めない）
     try:
@@ -538,12 +546,17 @@ def main():
 
     try:
         crypto_data = fetch_crypto_context()  # 失敗しても落ちない
+        print("✓ Crypto context fetched successfully")
+        if crypto_data and "fear_greed" in crypto_data:
+            print(f"  Fear & Greed: {crypto_data['fear_greed'].get('value')} ({crypto_data['fear_greed'].get('value_classification')})")
     except Exception as e:
         crypto_data = {"error": f"{type(e).__name__}: {e}"}
+        print(f"✗ Crypto context error: {e}")
 
     # 価格（失敗しても落ちない：prices未定義を潰す）
     try:
         prices = clob_prices(token_ids)  # {tid: {"BUY": "...", "SELL": "..."}, ...}
+        print(f"✓ Prices fetched for {len(prices)} markets\n")
     except Exception as e:
         prices = {}
         print("clob_prices error:", type(e).__name__, str(e))
@@ -551,8 +564,6 @@ def main():
     decisions = []
     evaluated = 0
     best = None  # (edge, th, title, tid, fair, buy, sell)
-
-    
 
     for tid, title in picked:
         crypto_features_data = None
@@ -565,25 +576,21 @@ def main():
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
             continue
         
+        # デバッグ情報を最初の10市場だけ表示
+        if evaluated < 10:
+            print(f"\n--- Market #{evaluated+1} ---")
+            print(f"Title: {title[:80]}")
+            print(f"Token ID: {tid}")
+            print(f"YES BUY: {yes_buy:.4f}, YES SELL: {yes_sell:.4f}")
 
         if "bitcoin" in title.lower() or "btc" in title.lower():
             crypto_features_data = crypto_features("bitcoin")
 
-        if crypto_data:
-            # 最初の10市場だけ詳細情報を表示
-        if evaluated < 10:
-            print(f"\n--- Market #{evaluated+1} ---")
-            print(f"Title: {title[:80]}")
-            print(f"YES BUY: {yes_buy:.4f}, YES SELL: {yes_sell:.4f}")
-            print(f"Market type: {mtype or 'general'}")
-            print(f"Fair prob: {fair:.4f}")
-            print(f"Edge: {edge:.4f} (threshold: {th:.4f})")
-            print(f"Pass: {'YES ✓' if edge >= th else 'NO ✗'}")
-
-                # 市場タイプ判定（weather/sports/crypto）
-                # 市場タイプ判定
-                # 市場タイプ判定（weather/sports/crypto）
+        # 市場タイプ判定（weather/sports/crypto）
         mtype = classify_market_type(title)
+        
+        if evaluated < 10:
+            print(f"Market type: {mtype or 'general'}")
 
         # marketごとの外部情報（weatherはタイトル依存なので都度）
         weather_data = None
@@ -597,46 +604,69 @@ def main():
             else:
                 weather_data = {"error": werr or "weather prob unavailable"}
 
-        # crypto はベースに加えて、タイトルがBTC系なら特徴量も追加
-        
-
         # LLMに渡すctxは「全部入り」に統一（市場タイプで削らない）
         ctx = {
             "weather": weather_data,
             "sports": sports_data,
             "crypto": {"base": crypto_data, "features": crypto_features_data},
         }
-        
 
         fair_prob = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
         fair = fair_prob
 
-
-
-        # mispricing edge を必ず計算してから使う（ここが UnboundLocalError の根本）
+        # mispricing edge を必ず計算してから使う
         edge = (fair - yes_buy) / yes_buy
         th = dynamic_edge_threshold(yes_buy, yes_sell)
+        
+        if evaluated < 10:
+            print(f"Fair prob: {fair:.4f}")
+            print(f"Edge: {edge:.4f} (threshold: {th:.4f})")
+            print(f"Pass: {'YES ✓' if edge >= th else 'NO ✗'}")
+        
         if (best is None) or (edge > best[0]):
             best = (edge, th, title, tid, fair, yes_buy, yes_sell)
      
         if edge >= th:
             decisions.append((edge, tid, title, fair, yes_buy, yes_sell))
+        
+        evaluated += 1
+
+    # サマリー情報を表示
+    print(f"\n{'='*60}")
+    print(f"EVALUATION SUMMARY")
+    print(f"{'='*60}")
+    print(f"Total markets evaluated: {evaluated}")
+    print(f"Decisions found (edge >= threshold): {len(decisions)}")
+    
+    if best:
+        edge, th, title, tid, fair, buy, sell = best
+        print(f"\nBest opportunity:")
+        print(f"  Title: {title[:80]}")
+        print(f"  Edge: {edge:.4f} (threshold: {th:.4f})")
+        print(f"  Fair: {fair:.4f}, Market BUY: {buy:.4f}")
+        print(f"  Token: {tid}")
 
     if not decisions:
+        print(f"\n⚠ No profitable opportunities found")
+        print(f"  - All {evaluated} markets had edge < threshold")
+        if best:
+            print(f"  - Best edge was {best[0]:.4f} (needed {best[1]:.4f})")
+        
         gh_issue(
             "run: no edge (dynamic threshold)",
-            f"乖離が見つかりませんでした（推定ベース）。"
+            f"乖離が見つかりませんでした（推定ベース）。\n"
+            f"Evaluated: {evaluated} markets\n"
+            f"Best edge: {best[0]:.4f} (needed {best[1]:.4f})" if best else "No valid markets"
         )
-
         return
 
-    # 残高（bankroll）: まずは「balance/allowance」をSDK側で参照するのが筋
-    # ただし返却形式は環境で揺れるため、ここは安全策として env を優先
+    # 残高（bankroll）
     bankroll = float(os.getenv("BANKROLL_USD", "50.0"))
-    api_budget = float(os.getenv("API_BUDGET_USD", "0.0"))  # 例: 0.5 とか
+    api_budget = float(os.getenv("API_BUDGET_USD", "0.0"))
     if bankroll - api_budget <= 0:
         gh_issue("run: STOP (balance would hit $0)", f"bankroll={bankroll:.2f}, api_budget={api_budget:.2f}")
         return
+    
     executed = 0
     logs = []
     for edge, tid, title, fair, yes_buy, yes_sell in decisions[:max_orders]:
