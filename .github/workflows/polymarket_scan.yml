@@ -1,44 +1,39 @@
 name: polymarket-agent
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: "*/10 * * * *"
-
-permissions:
-  contents: read
-  issues: write
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-
+          python-version: "3.11"
       - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
+        run: pip install -r requirements.txt
       - name: Run agent
         env:
-          MAX_MARKETS: "20"
-
-          REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
 
           PM_PRIVATE_KEY: ${{ secrets.PM_PRIVATE_KEY }}
           PM_FUNDER: ${{ secrets.PM_FUNDER }}
           PM_SIGNATURE_TYPE: ${{ secrets.PM_SIGNATURE_TYPE }}
 
-          PM_API_KEY: ${{ secrets.PM_API_KEY }}
-          PM_API_SECRET: ${{ secrets.PM_API_SECRET }}
-          PM_API_PASSPHRASE: ${{ secrets.PM_API_PASSPHRASE }}
+          CLAUDE_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_MODEL: ${{ secrets.CLAUDE_MODEL }}
 
-          DRY_RUN: "1"
-          
+          DRY_RUN: "1"              # まずは1固定
+          SCAN_MARKETS: "1000"
+          MAX_TOKENS: "500"
+          MAX_ORDERS_PER_RUN: "1"
+          BANKROLL_USD: "50"
+          MIN_ORDER_USD: "1"
         run: python agent.py
