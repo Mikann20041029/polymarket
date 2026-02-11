@@ -552,8 +552,7 @@ def main():
     evaluated = 0
     best = None  # (edge, th, title, tid, fair, buy, sell)
 
-    best = None  # (edge, th, title, tid, fair, buy, sell)
-
+    
 
     for tid, title in picked:
         crypto_features_data = None
@@ -597,7 +596,7 @@ def main():
         ctx = {
             "weather": weather_data,
             "sports": sports_data,
-            "crypto": {"base": crypto_base, "features": crypto_features_data},
+            "crypto": {"base": crypto_data, "features": crypto_features_data},
         }
         
 
