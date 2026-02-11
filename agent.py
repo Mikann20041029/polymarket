@@ -766,13 +766,13 @@ def main():
     evaluated = 0
     decisions = []
     best = None  # dict
- stats = {
-    "picked": len(picked),
-    "book_fail": 0,
-    "no_bids_or_asks": 0,
-    "bad_prices": 0,
-    "spread_too_wide": 0,
-}
+    stats = {
+        "picked": len(picked),
+        "book_fail": 0,
+        "no_bids_or_asks": 0,
+        "bad_prices": 0,
+        "spread_too_wide": 0,
+    }
 
 
     for tid, title, market_id in picked:
