@@ -527,7 +527,7 @@ def main():
     # L2 credsを導出（既存があればそれ、なければ作成） :contentReference[oaicite:5]{index=5}
     client.set_api_creds(client.create_or_derive_api_creds())
 
-        markets = gamma_markets(scan_markets)
+    markets = gamma_markets(scan_markets)
     token_ids, picked = extract_yes_token_ids(markets, max_tokens)
 
     # 外部情報（取れなくても運用は止めない）
