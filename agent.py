@@ -87,15 +87,35 @@ def extract_yes_token_ids(markets, max_tokens: int):
     return token_ids, picked
 
 def clob_prices(token_ids):
-    # まとめて価格取得（BUY/SELL）: /prices :contentReference[oaicite:4]{index=4}
-    # 返り値: { token_id: { "BUY": "...", "SELL": "..." }, ... }
-    r = requests.post(
+    ids = ",".join(token_ids)
+
+    r_buy = requests.get(
         f"{HOST}/prices",
-        json={"token_ids": token_ids, "sides": ["BUY", "SELL"]},
+        params={"token_ids": ids, "side": "BUY"},
         timeout=30,
     )
-    r.raise_for_status()
-    return r.json()
+    r_buy.raise_for_status()
+
+    r_sell = requests.get(
+        f"{HOST}/prices",
+        params={"token_ids": ids, "side": "SELL"},
+        timeout=30,
+    )
+    r_sell.raise_for_status()
+
+    buy = r_buy.json()
+    sell = r_sell.json()
+
+    # { token_id: { "BUY": price, "SELL": price } }
+    out = {}
+    for tid in token_ids:
+        if tid in buy and tid in sell:
+            out[tid] = {
+                "BUY": float(buy[tid]),
+                "SELL": float(sell[tid]),
+            }
+    return out
+
 
 def claude_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
     # Anthropic Messages API（最小）
