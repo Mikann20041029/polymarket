@@ -3,6 +3,97 @@ import json
 import time
 import math
 import requests
+import re
+from datetime import datetime, timezone
+
+OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search"
+OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
+
+def safe_get_json(url: str, params: dict, timeout=20):
+    try:
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        return r.json(), None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+def parse_weather_question(q: str):
+    """
+    超ざっくり対応:
+    - 'rain' を含む
+    - 'in <PLACE>' を含む
+    - 日付が 'YYYY-MM-DD' で含まれる
+    """
+    text = (q or "").strip()
+    low = text.lower()
+
+    if "rain" not in low:
+        return None
+
+    m_place = re.search(r"\bin\s+([A-Za-z .,'-]{2,60})", text)
+    m_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+    if not m_place or not m_date:
+        return None
+
+    place = m_place.group(1).strip(" ,.")
+    day = m_date.group(1)
+    return {"place": place, "date": day}
+
+def geocode_place(place: str):
+    data, err = safe_get_json(OPEN_METEO_GEOCODE, {"name": place, "count": 1, "language": "en", "format": "json"})
+    if err or not data or not data.get("results"):
+        return None, f"geocode failed: {err or 'no results'}"
+    r0 = data["results"][0]
+    return {"lat": r0["latitude"], "lon": r0["longitude"], "name": r0.get("name", place)}, None
+
+def rain_probability_for_date(lat: float, lon: float, day: str):
+    """
+    Open-Meteoの hourly precipitation_probability(%) を使って、
+    その日の「どこかの時間で雨になる確率」を近似:
+      P(any) = 1 - Π(1 - p_i)
+    """
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "precipitation_probability",
+        "timezone": "UTC",
+        "start_date": day,
+        "end_date": day,
+    }
+    data, err = safe_get_json(OPEN_METEO_FORECAST, params)
+    if err or not data:
+        return None, f"forecast failed: {err}"
+
+    hourly = data.get("hourly") or {}
+    probs = hourly.get("precipitation_probability")
+    if not probs or not isinstance(probs, list):
+        return None, "forecast missing precipitation_probability"
+
+    # 0..100 -> 0..1
+    ps = [max(0.0, min(1.0, float(x) / 100.0)) for x in probs if x is not None]
+    if not ps:
+        return None, "forecast empty precipitation_probability"
+
+    prod = 1.0
+    for p in ps:
+        prod *= (1.0 - p)
+    any_rain = 1.0 - prod
+    return any_rain, None
+
+def fair_prob_weather(question: str):
+    meta = parse_weather_question(question)
+    if not meta:
+        return None, "not weather/rain or parse failed"
+
+    geo, err = geocode_place(meta["place"])
+    if err:
+        return None, err
+
+    p, err = rain_probability_for_date(geo["lat"], geo["lon"], meta["date"])
+    if err:
+        return None, err
+
+    return p, None
 
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs, OrderType
