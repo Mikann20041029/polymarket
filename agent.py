@@ -430,17 +430,42 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_conte
         except Exception:
             return str(x)
 
-    ext = safe_json(external_context or {})
-    # ここを ext = safe_json(...) の直後に追加
+        # ===== FAIR 推定モード切替（デバッグ用）=====
+    # FULL         : Title + External context（通常）
+    # TITLE_ONLY   : Title だけ（external_context を空にする）
+    # EXTERNAL_ONLY: External context 優先（Title を無視するよう命令）
+    FAIR_MODE = os.getenv("FAIR_MODE", "FULL").strip().upper()
+
+    ctx = external_context or {}
+
+    if FAIR_MODE == "TITLE_ONLY":
+        ctx_for_llm = {}          # 外部情報は渡さない
+        title_for_llm = title     # タイトルはそのまま
+    elif FAIR_MODE == "EXTERNAL_ONLY":
+        ctx_for_llm = ctx         # 外部情報は渡す
+        title_for_llm = title     # ただし下のプロンプトで「無視」を強制する
+    else:
+        ctx_for_llm = ctx
+        title_for_llm = title
+
+    # 外部情報を安全に文字列化（Noneでも落ちない）
+    def safe_json(x):
+        try:
+            return json.dumps(x, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            return str(x)
+
+    ext = safe_json(ctx_for_llm)
+
     try:
-        ctx = external_context or {}
         ext_flags = (
-            f"ext(weather={'Y' if ctx.get('weather') else 'N'},"
-            f" sports={'Y' if ctx.get('sports') else 'N'},"
-            f" crypto={'Y' if ctx.get('crypto') else 'N'})"
+            f"ext(weather={'Y' if ctx_for_llm.get('weather') else 'N'},"
+            f" sports={'Y' if ctx_for_llm.get('sports') else 'N'},"
+            f" crypto={'Y' if ctx_for_llm.get('crypto') else 'N'})"
         )
     except Exception:
         ext_flags = "ext(weather=N, sports=N, crypto=N)"
+
 
     SYSTEM = (
         "You are an autonomous prediction-market trading agent.\n"
@@ -455,7 +480,9 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_conte
 
     USER = (
         "Estimate fair probability (YES) for this Polymarket event.\n"
-        f"Title: {title}\n"
+        f"Title: {title_for_llm}\n"
+        f"FAIR_MODE: {FAIR_MODE}\n"
+        + ("IMPORTANT: In EXTERNAL_ONLY mode, IGNORE the Title and rely ONLY on External context + prices.\n" if FAIR_MODE == "EXTERNAL_ONLY" else "")
         f"Current YES BUY price: {yes_buy}\n"
         f"Current YES SELL price: {yes_sell}\n"
         "\n"
