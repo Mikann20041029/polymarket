@@ -2,6 +2,7 @@ import os
 import json
 import time
 import math
+from datetime import datetime, timezone
 import requests
 def crypto_features(symbol: str):
     try:
@@ -40,6 +41,111 @@ def crypto_features(symbol: str):
     except Exception as e:
         print("crypto_features error:", e)
         return None
+def fetch_crypto_context() -> dict | None:
+    """
+    無料で取れる範囲の「オンチェーン代替 + センチメント代替」。
+    - CoinGecko: BTC/ETH/SOL の価格と24h変化（市場センチメントの荒い proxy）
+    - Alternative.me: Fear & Greed Index（センチメント）
+    取れなければ None を返す（運用を止めない）。
+    """
+    out = {"ts_utc": datetime.now(timezone.utc).isoformat()}
+
+    # 1) prices (CoinGecko)
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={
+                "ids": "bitcoin,ethereum,solana",
+                "vs_currencies": "usd",
+                "include_24hr_change": "true",
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        out["coingecko"] = r.json()
+    except Exception as e:
+        out["coingecko_error"] = f"{type(e).__name__}: {e}"
+
+    # 2) Fear & Greed
+    try:
+        r = requests.get("https://api.alternative.me/fng/", params={"limit": "1"}, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        # 期待フォーマット: {"data":[{"value":"..","value_classification":"..","timestamp":".."}], ...}
+        out["fear_greed"] = data.get("data", [None])[0]
+    except Exception as e:
+        out["fear_greed_error"] = f"{type(e).__name__}: {e}"
+
+    # “何も取れなかった”場合だけ None
+    if "coingecko" not in out and "fear_greed" not in out:
+        return None
+    return out
+
+
+def fetch_sports_context() -> dict | None:
+    """
+    “injury reports” をガチでやるならリーグ別に専用データソース/APIが必要です。
+    ここでは「まず動く最小」を置きます。
+    - まずは ESPN の公開RSS(存在するスポーツのみ)を“ニュース見出し”として取る
+      -> injury っぽい単語を含む見出しを拾う（荒いが、ゼロよりマシ）
+    取れなければ None を返す（運用を止めない）。
+    """
+    out = {"ts_utc": datetime.now(timezone.utc).isoformat()}
+
+    feeds = [
+        # NFL
+        ("nfl", "https://www.espn.com/espn/rss/nfl/news"),
+        # NBA
+        ("nba", "https://www.espn.com/espn/rss/nba/news"),
+        # MLB
+        ("mlb", "https://www.espn.com/espn/rss/mlb/news"),
+        # NHL
+        ("nhl", "https://www.espn.com/espn/rss/nhl/news"),
+    ]
+
+    keywords = ["injury", "injured", "out", "questionable", "doubtful", "IL", "concussion", "hamstring", "ankle", "knee"]
+
+    hits = []
+    errors = []
+
+    for league, url in feeds:
+        try:
+            r = requests.get(url, timeout=20)
+            r.raise_for_status()
+            xml = r.text
+
+            # 超簡易RSS抽出：<title>...</title> を拾う（最初のチャンネルtitleは除外）
+            titles = []
+            start = 0
+            while True:
+                a = xml.find("<title>", start)
+                if a == -1:
+                    break
+                b = xml.find("</title>", a)
+                if b == -1:
+                    break
+                t = xml[a + 7 : b].strip()
+                titles.append(t)
+                start = b + 8
+
+            # チャンネル自体のタイトルが混ざるので先頭1個は捨てることが多い
+            titles = titles[1:50]
+
+            for t in titles:
+                low = t.lower()
+                if any(k in low for k in keywords):
+                    hits.append({"league": league, "title": t})
+        except Exception as e:
+            errors.append({"league": league, "error": f"{type(e).__name__}: {e}"})
+
+    if hits:
+        out["injury_news_titles"] = hits[:40]
+    if errors:
+        out["errors"] = errors
+
+    if "injury_news_titles" not in out:
+        return None
+    return out
 
 import re
 from datetime import datetime, timezone
@@ -278,6 +384,16 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_conte
             return str(x)
 
     ext = safe_json(external_context or {})
+    # ここを ext = safe_json(...) の直後に追加
+    try:
+        ctx = external_context or {}
+        ext_flags = (
+            f"ext(weather={'Y' if ctx.get('weather') else 'N'},"
+            f" sports={'Y' if ctx.get('sports') else 'N'},"
+            f" crypto={'Y' if ctx.get('crypto') else 'N'})"
+        )
+    except Exception:
+    ext_flags = "ext(weather=N, sports=N, crypto=N)"
 
     SYSTEM = (
         "You are an autonomous prediction-market trading agent.\n"
@@ -286,6 +402,7 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_conte
         "If balance hits 0, the agent dies.\n"
         "Do not align blindly with market odds.\n"
         "Use external data when informative.\n"
+        f"{ext_flags}\n"
         "Return ONLY a number between 0 and 1.\n"
     )
 
@@ -369,6 +486,16 @@ def main():
 
     markets = gamma_markets(scan_markets)
     token_ids, picked = extract_yes_token_ids(markets, max_tokens)
+    # 外部情報（取れなくても運用は止めない）
+    crypto_data = fetch_crypto_context()
+    sports_data = fetch_sports_context()
+
+    external_context = {
+        "weather": weather_data,       # すでに天気を取ってるなら、ここを weather_data に差し替え
+        "crypto": crypto_data,
+        "sports": sports_data,
+    }
+
     if not token_ids:
         gh_issue("run: no tradable markets", "enableOrderBook=true の市場が見つかりませんでした。")
         return
