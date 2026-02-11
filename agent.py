@@ -90,36 +90,50 @@ import requests
 
 HOST = "https://clob.polymarket.com"
 
-def chunked(xs, n):
-    for i in range(0, len(xs), n):
-        yield xs[i:i+n]
-
-def _prices_once(token_ids_chunk, side: str) -> dict:
-    params = [("side", side)]
-    params += [("token_ids", str(tid)) for tid in token_ids_chunk]
-
-    r = requests.get(f"{HOST}/prices", params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
 def clob_prices(token_ids):
+    """
+    {tid: {"BUY": <best_ask>, "SELL": <best_bid>}, ...}
+    BUY  = こちらが買う時に踏む価格 = best ask
+    SELL = こちらが売る時に踏める価格 = best bid
+    """
     out = {}
 
-    # まずは控えめに。多すぎると400になりやすいので 30〜80 で安定しやすい
-    for chunk in chunked(token_ids, 50):
-        buy = _prices_once(chunk, "BUY")
-        sell = _prices_once(chunk, "SELL")
+    for tid in token_ids:
+        tid = str(tid)
 
-        # 返却形式に合わせて統合（辞書で tid -> price が返る想定）
-        for tid in chunk:
-            tid = str(tid)
-            out.setdefault(tid, {})
-            if isinstance(buy, dict) and tid in buy:
-                out[tid]["BUY"] = buy[tid]
-            if isinstance(sell, dict) and tid in sell:
-                out[tid]["SELL"] = sell[tid]
+        r = requests.get(
+            f"{HOST}/book",
+            params={"token_id": tid},
+            timeout=30,
+        )
+        r.raise_for_status()
+        book = r.json() or {}
+
+        bids = book.get("bids") or []
+        asks = book.get("asks") or []
+
+        # bids/asks の要素形式は環境で dict だったり list だったりするので両対応
+        def _price(x):
+            if isinstance(x, dict):
+                return float(x.get("price"))
+            if isinstance(x, (list, tuple)) and len(x) >= 1:
+                return float(x[0])
+            return None
+
+        best_bid = _price(bids[0]) if bids else None
+        best_ask = _price(asks[0]) if asks else None
+
+        if best_bid is None and best_ask is None:
+            continue
+
+        out[tid] = {}
+        if best_ask is not None:
+            out[tid]["BUY"] = best_ask
+        if best_bid is not None:
+            out[tid]["SELL"] = best_bid
 
     return out
+
 
 
 
