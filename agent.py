@@ -86,34 +86,43 @@ def extract_yes_token_ids(markets, max_tokens: int):
             picked.append((tid, str(m.get("question") or m.get("title") or "unknown")))
     return token_ids, picked
 
+def chunked(xs, n):
+    for i in range(0, len(xs), n):
+        yield xs[i:i+n]
+
 def clob_prices(token_ids):
-    ids = ",".join(token_ids)
-
-    r_buy = requests.get(
-        f"{HOST}/prices",
-        params={"token_ids": ids, "side": "BUY"},
-        timeout=30,
-    )
-    r_buy.raise_for_status()
-
-    r_sell = requests.get(
-        f"{HOST}/prices",
-        params={"token_ids": ids, "side": "SELL"},
-        timeout=30,
-    )
-    r_sell.raise_for_status()
-
-    buy = r_buy.json()
-    sell = r_sell.json()
-
-    # { token_id: { "BUY": price, "SELL": price } }
     out = {}
-    for tid in token_ids:
-        if tid in buy and tid in sell:
-            out[tid] = {
-                "BUY": float(buy[tid]),
-                "SELL": float(sell[tid]),
-            }
+
+    # 1回で投げる数は控えめに（まず50〜100が安全）
+    for chunk in chunked(token_ids, 80):
+        q = ",".join(chunk)
+
+        r_buy = requests.get(
+            f"{HOST}/prices",
+            params={"token_ids": q, "side": "BUY"},
+            timeout=30,
+        )
+        r_buy.raise_for_status()
+
+        r_sell = requests.get(
+            f"{HOST}/prices",
+            params={"token_ids": q, "side": "SELL"},
+            timeout=30,
+        )
+        r_sell.raise_for_status()
+
+        buy = r_buy.json()
+        sell = r_sell.json()
+
+        # 返ってくるJSONの形に合わせてここは既存ロジックに統合
+        # 例: out[tid] = {"BUY": buy[tid], "SELL": sell[tid]}
+        for tid in chunk:
+            out.setdefault(tid, {})
+            if isinstance(buy, dict) and tid in buy:
+                out[tid]["BUY"] = buy[tid]
+            if isinstance(sell, dict) and tid in sell:
+                out[tid]["SELL"] = sell[tid]
+
     return out
 
 
