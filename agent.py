@@ -343,7 +343,10 @@ def main():
     # 残高（bankroll）: まずは「balance/allowance」をSDK側で参照するのが筋
     # ただし返却形式は環境で揺れるため、ここは安全策として env を優先
     bankroll = float(os.getenv("BANKROLL_USD", "50.0"))
-
+    api_budget = float(os.getenv("API_BUDGET_USD", "0.0"))  # 例: 0.5 とか
+    if bankroll - api_budget <= 0:
+        gh_issue("run: STOP (balance would hit $0)", f"bankroll={bankroll:.2f}, api_budget={api_budget:.2f}")
+        return
     executed = 0
     logs = []
     for edge, tid, title, fair, yes_buy, yes_sell in decisions[:max_orders]:
