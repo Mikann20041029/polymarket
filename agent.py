@@ -92,7 +92,7 @@ def gamma_pick_one_token_id() -> str:
 
 def main():
     # knobs
-dry_run = os.getenv("DRY_RUN", "1") == "1"
+    dry_run = os.getenv("DRY_RUN", "1") == "1"
 
 # 前提：ここより前で side / token_id / orderbook / balance_usd / fair_prob は取得済みにする
 # side: "BUY" or "SELL"
@@ -100,35 +100,35 @@ dry_run = os.getenv("DRY_RUN", "1") == "1"
 # balance_usd: float (USD)
 
 # --- orderbook guard ---
-bids = orderbook.get("bids") or []
-asks = orderbook.get("asks") or []
-if not bids or not asks:
-    raise RuntimeError("orderbook empty (no bids/asks)")
+    bids = orderbook.get("bids") or []
+    asks = orderbook.get("asks") or []
+    if not bids or not asks:
+        raise RuntimeError("orderbook empty (no bids/asks)")
 
-best_bid = float(bids[0]["price"])
-best_ask = float(asks[0]["price"])
+    best_bid = float(bids[0]["price"])
+    best_ask = float(asks[0]["price"])
 
 # price: BUYならask、SELLならbid
-price = best_ask if side == "BUY" else best_bid
+    price = best_ask if side == "BUY" else best_bid
 
 # payout ratio b = (1/price - 1). priceが1に近いとbが0に近づくのでガード
-if price <= 0 or price >= 0.999999:
-    raise RuntimeError(f"invalid price for Kelly: {price}")
+    if price <= 0 or price >= 0.999999:
+        raise RuntimeError(f"invalid price for Kelly: {price}")
 
-b = (1.0 / price) - 1.0
-p = float(fair_prob)
-p = max(0.0, min(1.0, p))
-q = 1.0 - p
+    b = (1.0 / price) - 1.0
+    p = float(fair_prob)
+    p = max(0.0, min(1.0, p))
+    q = 1.0 - p
 
 # Kelly fraction (cap 6%)
-raw_f = (b * p - q) / b
-kelly_f = max(0.0, min(raw_f, 0.06))
+    raw_f = (b * p - q) / b
+    kelly_f = max(0.0, min(raw_f, 0.06))
 
-bankroll = float(balance_usd)
-size_usd = bankroll * kelly_f
+    bankroll = float(balance_usd)
+    size_usd = bankroll * kelly_f
 
 # size: 株数(シェア数)。極小を0に丸めて無駄発注を防ぐ
-size = round(size_usd / price, 4)
+    size = round(size_usd / price, 4)
 if size <= 0:
     # 取引しない（edge不足/kellyゼロ）
     size = 0.0
