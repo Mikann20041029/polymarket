@@ -137,11 +137,9 @@ def clob_prices(token_ids):
 
 
 
-def claude_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
-    # Anthropic Messages API（最小）
-    # 必要env: CLAUDE_API_KEY, CLAUDE_MODEL
-    api_key = env("CLAUDE_API_KEY")
-    model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
+def openai_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
+    api_key = env("OPENAI_API_KEY")
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
     prompt = (
         "You estimate fair probability for a Polymarket YES/NO event.\n"
@@ -152,27 +150,30 @@ def claude_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
     )
 
     r = requests.post(
-        "https://api.anthropic.com/v1/messages",
+        "https://api.openai.com/v1/responses",
         headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
         },
         json={
             "model": model,
-            "max_tokens": 8,
+            "input": prompt,
+            "max_output_tokens": 16,
             "temperature": 0.0,
-            "messages": [{"role": "user", "content": prompt}],
         },
         timeout=60,
     )
     r.raise_for_status()
+
     data = r.json()
-    text = data["content"][0]["text"].strip()
+    text = data["output"][0]["content"][0]["text"].strip()
     p = float(text)
+
     if not (0.0 <= p <= 1.0):
-        raise RuntimeError(f"Claude returned out-of-range prob: {p}")
+        raise RuntimeError(f"OpenAI returned out-of-range prob: {p}")
+
     return p
+
 
 def kelly_fraction(p: float, price: float) -> float:
     # binary: 1口=1$, price=$p_mkt, payout b = (1/price - 1)
