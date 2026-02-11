@@ -568,7 +568,7 @@ def main():
         
 
         if "bitcoin" in title.lower() or "btc" in title.lower():
-            crypto_features_data = crypto_features(title, yes_buy, yes_sell)
+            crypto_features_data = crypto_features("bitcoin")
 
         if crypto_data:
             print("CRYPTO DATA:", crypto_data)
@@ -591,10 +591,7 @@ def main():
                 weather_data = {"error": werr or "weather prob unavailable"}
 
         # crypto はベースに加えて、タイトルがBTC系なら特徴量も追加
-        crypto_extra = None
-        low = title.lower()
-        if any(k in low for k in ["bitcoin", "btc"]):
-            crypto_extra = crypto_features("bitcoin")
+        
 
         # LLMに渡すctxは「全部入り」に統一（市場タイプで削らない）
         ctx = {
@@ -602,8 +599,7 @@ def main():
             "sports": sports_data,
             "crypto": {"base": crypto_base, "features": crypto_features_data},
         }
-        if crypto_extra:
-            ctx["crypto_extra"] = crypto_extra
+        
 
         fair_prob = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
         fair = fair_prob
