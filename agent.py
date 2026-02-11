@@ -482,7 +482,7 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_conte
         "Estimate fair probability (YES) for this Polymarket event.\n"
         f"Title: {title_for_llm}\n"
         f"FAIR_MODE: {FAIR_MODE}\n"
-        + ("IMPORTANT: In EXTERNAL_ONLY mode, IGNORE the Title and rely ONLY on External context + prices.\n" if FAIR_MODE == "EXTERNAL_ONLY" else "")
+        "IMPORTANT: In EXTERNAL_ONLY mode, IGNORE the Title and rely ONLY on External context + prices.\n" if FAIR_MODE == "EXTERNAL_ONLY" else ""
         f"Current YES BUY price: {yes_buy}\n"
         f"Current YES SELL price: {yes_sell}\n"
         "\n"
