@@ -393,7 +393,7 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float, external_conte
             f" crypto={'Y' if ctx.get('crypto') else 'N'})"
         )
     except Exception:
-ext_flags = "ext(weather=N, sports=N, crypto=N)"
+        ext_flags = "ext(weather=N, sports=N, crypto=N)"
 
     SYSTEM = (
         "You are an autonomous prediction-market trading agent.\n"
