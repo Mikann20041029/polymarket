@@ -490,8 +490,10 @@ def main():
     crypto_data = fetch_crypto_context()
     sports_data = fetch_sports_context()
 
-    external_context = {
-        "weather": weather_data,       # すでに天気を取ってるなら、ここを weather_data に差し替え
+    weather_data = None  # まずは未取得として定義
+
+    external_context_base = {
+        "weather": None,
         "crypto": crypto_data,
         "sports": sports_data,
     }
@@ -525,6 +527,19 @@ def main():
             print("CRYPTO DATA:", crypto_data)
 
         fair = openai_fair_prob(title, yes_buy, yes_sell, external_context)
+        # --- weather: タイトルが rain 市場の形式なら、外部情報として注入 ---
+        weather_data = None
+        wp, werr = fair_prob_weather(title)
+        if wp is not None:
+            weather_data = {
+                "p_any_rain": wp,
+                "source": "open-meteo precipitation_probability -> any-rain",
+            }
+
+        external_context = {
+            **external_context_base,
+            "weather": weather_data,
+        }
 
         # mispricing: fair - buy_price
         edge = (fair - yes_buy) / yes_buy
