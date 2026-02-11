@@ -779,11 +779,11 @@ def main():
      evaluated += 1
 
         # Fetch full book (depth)
-        try:
-            book = fetch_book(tid)
-        except Exception:
-           stats["book_fail"] += 1
-           continue
+    try:
+        book = fetch_book(tid)
+    except Exception:
+        stats["book_fail"] += 1
+        continue
 
 
         bids = parse_levels(book.get("bids") or [])
