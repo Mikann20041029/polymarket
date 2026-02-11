@@ -94,8 +94,6 @@ def main():
     # ---- knobs ----
     dry_run = os.getenv("DRY_RUN", "1") == "1"
     # まずは「絶対に刺さりにくい」超保守：0.01で0.1株（実弾でも損失最小）
-    price = float(os.getenv("TEST_PRICE", "0.01"))
-    size  = float(os.getenv("TEST_SIZE", "0.1"))
 
     # ---- secrets ----
     l1_key = env("PM_PRIVATE_KEY")
