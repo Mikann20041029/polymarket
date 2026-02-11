@@ -532,7 +532,7 @@ def main():
 
     # 外部情報（取れなくても運用は止めない）
     try:
-        sports_data = fetch_injury_news_titles()  # 失敗しても落ちない
+        sports_data = fetch_sports_context()  # 失敗しても落ちない
     except Exception as e:
         sports_data = {"error": f"{type(e).__name__}: {e}"}
 
@@ -556,6 +556,8 @@ def main():
 
 
     for tid, title in picked:
+        crypto_features_data = None
+
         p = prices.get(tid)
         if not p:
             continue
@@ -563,10 +565,10 @@ def main():
         yes_sell = float(p.get("SELL", "nan"))
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
             continue
-        crypto_data = None
+        
 
         if "bitcoin" in title.lower() or "btc" in title.lower():
-            crypto_data = crypto_features("bitcoin")
+            crypto_features_data = crypto_features(title, yes_buy, yes_sell)
 
         if crypto_data:
             print("CRYPTO DATA:", crypto_data)
@@ -598,7 +600,7 @@ def main():
         ctx = {
             "weather": weather_data,
             "sports": sports_data,
-            "crypto": crypto_data,
+            "crypto": {"base": crypto_base, "features": crypto_features_data},
         }
         if crypto_extra:
             ctx["crypto_extra"] = crypto_extra
