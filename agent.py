@@ -49,6 +49,8 @@ def gh_issue(title: str, body: str):
     r.raise_for_status()
 
 def gamma_pick_one_token_id() -> str:
+    max_markets = int(os.getenv("MAX_MARKETS", "200"))
+
     # enableOrderBook=true & active の市場からYES token_idを1つ拾う
     r = requests.get(
         f"{GAMMA}/markets",
@@ -57,6 +59,8 @@ def gamma_pick_one_token_id() -> str:
     )
     r.raise_for_status()
     markets = r.json()
+    markets = markets[:max_markets]
+
 
     for m in markets:
         if not m.get("enableOrderBook", False):
