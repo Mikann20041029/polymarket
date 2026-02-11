@@ -569,8 +569,28 @@ def main():
         if crypto_data:
             print("CRYPTO DATA:", crypto_data)
 
-        ctx = {}
+                # 市場タイプ判定（weather/sports/crypto）
         mtype = classify_market_type(title)
+
+        # --- weather: 先に取得してから ctx に入れる（前回値混入を防止） ---
+        weather_data = None
+        if mtype == "weather":
+            wp, werr = fair_prob_weather(title)
+            if wp is not None:
+                weather_data = {
+                    "p_any_rain": wp,
+                    "source": "open-meteo precipitation_probability -> any-rain",
+                }
+
+        # --- crypto: 必要なら銘柄特徴を取る（例：BTC） ---
+        crypto_data = None
+        if "bitcoin" in title.lower() or "btc" in title.lower():
+            crypto_data = crypto_features("bitcoin")
+            if crypto_data:
+                print("CRYPTO DATA:", crypto_data)
+
+        # ctx は「該当タイプだけ」入れる（他タイプは入れない）
+        ctx = {}
         if mtype == "weather":
             ctx["weather"] = weather_data
         elif mtype == "sports":
@@ -580,31 +600,17 @@ def main():
         else:
             continue
 
+        # LLM 推定（公平確率）
         fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
 
-        # --- weather: タイトルが rain 市場の形式なら、外部情報として注入 ---
-        weather_data = None
-        wp, werr = fair_prob_weather(title)
-        if wp is not None:
-            weather_data = {
-                "p_any_rain": wp,
-                "source": "open-meteo precipitation_probability -> any-rain",
-            }
+        # mispricing edge を必ず計算してから使う（ここが UnboundLocalError の根本）
+        edge = (fair - yes_buy) / yes_buy
 
-        external_context = {
-            **external_context_base,
-            "weather": weather_data,
-        }
-
-        # mispricing: fair - buy_price
+        # dynamic 閾値でフィルタ（通ったものだけ append）
         th = dynamic_edge_threshold(yes_buy, yes_sell)
         if edge >= th:
             decisions.append((edge, tid, title, fair, yes_buy, yes_sell))
 
-
-        decisions.append((edge, tid, title, fair, yes_buy, yes_sell))
-
-    decisions.sort(reverse=True, key=lambda x: x[0])
     if not decisions:
         gh_issue(
             "run: no edge (dynamic threshold)",
