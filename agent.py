@@ -610,11 +610,10 @@ def main():
 
         # mispricing edge を必ず計算してから使う（ここが UnboundLocalError の根本）
         edge = (fair - yes_buy) / yes_buy
+        th = dynamic_edge_threshold(yes_buy, yes_sell)
         if (best is None) or (edge > best[0]):
             best = (edge, th, title, tid, fair, yes_buy, yes_sell)
-
-        # dynamic 閾値でフィルタ（通ったものだけ append）
-        th = dynamic_edge_threshold(yes_buy, yes_sell)
+     
         if edge >= th:
             decisions.append((edge, tid, title, fair, yes_buy, yes_sell))
 
