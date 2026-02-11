@@ -527,41 +527,29 @@ def main():
     # L2 credsを導出（既存があればそれ、なければ作成） :contentReference[oaicite:5]{index=5}
     client.set_api_creds(client.create_or_derive_api_creds())
 
-    markets = gamma_markets(scan_markets)
+        markets = gamma_markets(scan_markets)
     token_ids, picked = extract_yes_token_ids(markets, max_tokens)
+
     # 外部情報（取れなくても運用は止めない）
-    crypto_data = fetch_crypto_context()
-    sports_data = fetch_sports_context()
-    prices = clob_prices(token_ids)  # {tid: {"BUY": "...", "SELL": "..."}, ...}
-
-    weather_data = None  # まずは未取得として定義
-
-        # 先に外部情報を“全部”取る（失敗しても落とさない）
-    weather_data = None
-    sports_data = None
-    crypto_data = None
-
-    # すでに天気を取れている実装がある前提：ここはあなたの既存ロジックを使う
-    # weather_data は「天気市場に該当したときだけ」埋める方針でもOK
-    # ただし “天気だけに限定しない” ため、sports/crypto は毎回取る
     try:
-        sports_data = fetch_injury_news_titles()  # 返り値が list/dict どっちでもOK
+        sports_data = fetch_injury_news_titles()  # 失敗しても落ちない
     except Exception as e:
         sports_data = {"error": f"{type(e).__name__}: {e}"}
 
     try:
-        crypto_data = fetch_crypto_context()  # 既存関数（on-chain/sentiment っぽいもの）
+        crypto_data = fetch_crypto_context()  # 失敗しても落ちない
     except Exception as e:
         crypto_data = {"error": f"{type(e).__name__}: {e}"}
 
-    # ベース外部情報（常にLLMに渡す“全部入り”）
-    external_context_base = {
-        "weather": weather_data,
-        "sports": sports_data,
-        "crypto": crypto_data,
-    }
+    # 価格（失敗しても落ちない：prices未定義を潰す）
+    try:
+        prices = clob_prices(token_ids)  # {tid: {"BUY": "...", "SELL": "..."}, ...}
+    except Exception as e:
+        prices = {}
+        print("clob_prices error:", type(e).__name__, str(e))
 
     decisions = []
+
 
     for tid, title in picked:
         p = prices.get(tid)
@@ -580,9 +568,10 @@ def main():
             print("CRYPTO DATA:", crypto_data)
 
                 # 市場タイプ判定（weather/sports/crypto）
+                # 市場タイプ判定
         mtype = classify_market_type(title)
 
-        # --- weather: 先に取得してから ctx に入れる（前回値混入を防止） ---
+        # marketごとの外部情報（weatherはタイトル依存なので都度）
         weather_data = None
         if mtype == "weather":
             wp, werr = fair_prob_weather(title)
@@ -591,54 +580,31 @@ def main():
                     "p_any_rain": wp,
                     "source": "open-meteo precipitation_probability -> any-rain",
                 }
+            else:
+                weather_data = {"error": werr or "weather prob unavailable"}
 
-        # --- crypto: 必要なら銘柄特徴を取る（例：BTC） ---
-        crypto_data = None
-        if "bitcoin" in title.lower() or "btc" in title.lower():
-            crypto_data = crypto_features("bitcoin")
-            if crypto_data:
-                print("CRYPTO DATA:", crypto_data)
-
-        # ctx は「該当タイプだけ」入れる（他タイプは入れない）
-        ctx = {}
-        if mtype == "weather":
-            ctx["weather"] = weather_data
-        elif mtype == "sports":
-            ctx["sports"] = sports_data
-        elif mtype == "crypto":
-            ctx["crypto"] = crypto_data
-        else:
-            continue
-        # 市場タイプ判定（weather/sports/crypto）
+        # crypto はベースに加えて、タイトルがBTC系なら特徴量も追加
+        crypto_extra = None
         low = title.lower()
-        mtype = "generic"
-        if "rain" in low and re.search(r"\b\d{4}-\d{2}-\d{2}\b", title):
-            mtype = "weather"
-        elif any(k in low for k in ["nfl", "nba", "mlb", "injury", "injuries", "out for season"]):
-            mtype = "sports"
-        elif any(k in low for k in ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "on-chain"]):
-            mtype = "crypto"
+        if any(k in low for k in ["bitcoin", "btc"]):
+            crypto_extra = crypto_features("bitcoin")
 
-        # ここが重要：毎回 “全部入り” を渡す（天気だけ・cryptoだけにしない）
-        ctx = dict(external_context_base)
+        # LLMに渡すctxは「全部入り」にする（あなたの方針通り）
+        ctx = {
+            "weather": weather_data,
+            "sports": sports_data,
+            "crypto": crypto_data,
+        }
+        if crypto_extra:
+            ctx["crypto_extra"] = crypto_extra
 
-        # 天気市場なら、その市場に紐づく天気データだけ上書きして渡す（取れないなら None のまま）
-        if mtype == "weather":
-            try:
-                q = parse_weather_question(title)
-                if q:
-                    w = fetch_open_meteo_weather(q["place"], q["date"])
-                    ctx["weather"] = w
-            except Exception as e:
-                ctx["weather"] = {"error": f"{type(e).__name__}: {e}"}
         # デバッグ（外部情報が本当に入ってるか）
         # 例: weather:True sports:True crypto:True
         dbg = f"ctx_flags weather={ctx.get('weather') is not None} sports={ctx.get('sports') is not None} crypto={ctx.get('crypto') is not None}"
 
-        fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
+        fair_prob = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
+        fair = fair_prob
 
-        # LLM 推定（公平確率）
-        fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
 
         # mispricing edge を必ず計算してから使う（ここが UnboundLocalError の根本）
         edge = (fair - yes_buy) / yes_buy
