@@ -570,7 +570,15 @@ def main():
             crypto_features_data = crypto_features("bitcoin")
 
         if crypto_data:
-            print("CRYPTO DATA:", crypto_data)
+            # 最初の10市場だけ詳細情報を表示
+        if evaluated < 10:
+            print(f"\n--- Market #{evaluated+1} ---")
+            print(f"Title: {title[:80]}")
+            print(f"YES BUY: {yes_buy:.4f}, YES SELL: {yes_sell:.4f}")
+            print(f"Market type: {mtype or 'general'}")
+            print(f"Fair prob: {fair:.4f}")
+            print(f"Edge: {edge:.4f} (threshold: {th:.4f})")
+            print(f"Pass: {'YES ✓' if edge >= th else 'NO ✗'}")
 
                 # 市場タイプ判定（weather/sports/crypto）
                 # 市場タイプ判定
