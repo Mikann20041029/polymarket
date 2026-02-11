@@ -532,6 +532,7 @@ def main():
     # 外部情報（取れなくても運用は止めない）
     crypto_data = fetch_crypto_context()
     sports_data = fetch_sports_context()
+    prices = clob_prices(token_ids)  # {tid: {"BUY": "...", "SELL": "..."}, ...}
 
     weather_data = None  # まずは未取得として定義
 
