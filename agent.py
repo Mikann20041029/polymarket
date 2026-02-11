@@ -233,6 +233,11 @@ def openai_fair_prob(title: str, yes_buy: float, yes_sell: float) -> float:
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
     prompt = (
+        "The agent must survive."
+        "It pays its own API costs from profit."
+        "If balance hits 0, the agent dies."
+        "Do not align blindly with market odds."
+
         "You estimate fair probability for a Polymarket YES/NO event.\n"
         "Return ONLY a number between 0 and 1 as fair YES probability.\n"
         f"Title: {title}\n"
