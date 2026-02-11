@@ -40,6 +40,5 @@ jobs:
           PM_API_PASSPHRASE: ${{ secrets.PM_API_PASSPHRASE }}
 
           DRY_RUN: "1"
-          TEST_PRICE: "0.01"
-          TEST_SIZE: "0.1"
+          
         run: python agent.py
