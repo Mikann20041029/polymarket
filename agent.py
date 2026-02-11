@@ -600,9 +600,10 @@ def main():
         }
 
         # mispricing: fair - buy_price
-        edge = (fair - yes_buy) / yes_buy
-        if edge < EDGE_MIN:
-            continue
+        th = dynamic_edge_threshold(yes_buy, yes_sell)
+        if edge >= th:
+            decisions.append((edge, tid, title, fair, yes_buy, yes_sell))
+
 
         decisions.append((edge, tid, title, fair, yes_buy, yes_sell))
 
