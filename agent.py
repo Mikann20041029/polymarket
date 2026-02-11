@@ -3,6 +3,44 @@ import json
 import time
 import math
 import requests
+def crypto_features(symbol: str):
+    try:
+        # ① CoinGecko
+        cg = requests.get(
+            f"https://api.coingecko.com/api/v3/coins/markets",
+            params={
+                "vs_currency": "usd",
+                "ids": symbol.lower(),
+            },
+            timeout=10,
+        ).json()
+
+        if not cg:
+            return None
+
+        price = cg[0]["current_price"]
+        volume = cg[0]["total_volume"]
+        market_cap = cg[0]["market_cap"]
+
+        # ② Fear & Greed
+        fg = requests.get(
+            "https://api.alternative.me/fng/",
+            timeout=10,
+        ).json()
+
+        fear_greed = int(fg["data"][0]["value"])
+
+        return {
+            "price": price,
+            "volume": volume,
+            "market_cap": market_cap,
+            "fear_greed": fear_greed,
+        }
+
+    except Exception as e:
+        print("crypto_features error:", e)
+        return None
+
 import re
 from datetime import datetime, timezone
 
