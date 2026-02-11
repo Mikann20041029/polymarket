@@ -535,24 +535,33 @@ def main():
 
     weather_data = None  # まずは未取得として定義
 
+        # 先に外部情報を“全部”取る（失敗しても落とさない）
+    weather_data = None
+    sports_data = None
+    crypto_data = None
+
+    # すでに天気を取れている実装がある前提：ここはあなたの既存ロジックを使う
+    # weather_data は「天気市場に該当したときだけ」埋める方針でもOK
+    # ただし “天気だけに限定しない” ため、sports/crypto は毎回取る
+    try:
+        sports_data = fetch_injury_news_titles()  # 返り値が list/dict どっちでもOK
+    except Exception as e:
+        sports_data = {"error": f"{type(e).__name__}: {e}"}
+
+    try:
+        crypto_data = fetch_crypto_context()  # 既存関数（on-chain/sentiment っぽいもの）
+    except Exception as e:
+        crypto_data = {"error": f"{type(e).__name__}: {e}"}
+
+    # ベース外部情報（常にLLMに渡す“全部入り”）
     external_context_base = {
-        "weather": None,
-        "crypto": crypto_data,
+        "weather": weather_data,
         "sports": sports_data,
+        "crypto": crypto_data,
     }
-
-    if not token_ids:
-        gh_issue("run: no tradable markets", "enableOrderBook=true の市場が見つかりませんでした。")
-        return
-    external_context = {
-        "weather": weather_data if "weather_data" in globals() else None,
-        "crypto": crypto_data if "crypto_data" in globals() else None,
-        "sports": sports_data if "sports_data" in globals() else None,
-    }
-
-    prices = clob_prices(token_ids)  # {tid: {"BUY": "...", "SELL": "..."}, ...}
 
     decisions = []
+
     for tid, title in picked:
         p = prices.get(tid)
         if not p:
