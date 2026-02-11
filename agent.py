@@ -6,6 +6,26 @@ import requests
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs, OrderType
 from py_clob_client.order_builder.constants import BUY
+EDGE_MIN = 0.08   # 8%
+KELLY_MAX = 0.06  # bankrollの6%上限
+
+def should_trade(fair_yes_prob: float, yes_price: float):
+    # yes_price が 0 の場合は除外
+    if yes_price <= 0:
+        return False, 0.0
+    edge = (fair_yes_prob - yes_price) / yes_price
+    return edge >= EDGE_MIN, edge
+
+def kelly_fraction(edge: float, odds: float):
+    # 簡易・安全側。oddsは仮で1.0固定でも可
+    if odds <= 0:
+        return 0.0
+    f = edge / odds
+    if f < 0:
+        f = 0.0
+    if f > KELLY_MAX:
+        f = KELLY_MAX
+    return f
 
 HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
