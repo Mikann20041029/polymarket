@@ -3,7 +3,8 @@ import json
 import time
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 from py_clob_client.client import ClobClient
@@ -21,7 +22,9 @@ EDGE_MIN = float(os.getenv("EDGE_MIN", "0.08"))
 KELLY_MAX = float(os.getenv("KELLY_MAX", "0.06"))
 FEE_RATE = float(os.getenv("FEE_RATE", "0.00"))
 SLIPPAGE_MAX = float(os.getenv("SLIPPAGE_MAX", "0.01"))
-SPREAD_MAX = float(os.getenv("SPREAD_MAX", "0.03"))
+SPREAD_MAX = float(os.getenv("SPREAD_MAX", "0.05"))
+MAX_DAYS_TO_RESOLUTION = int(os.getenv("MAX_DAYS_TO_RESOLUTION", "14"))
+CLOB_WORKERS = int(os.getenv("CLOB_WORKERS", "10"))
 
 
 # ── Utility ────────────────────────────────────────────────
@@ -103,7 +106,7 @@ def crypto_features(symbol: str):
             "fear_greed": fear_greed,
         }
     except Exception as e:
-        print("crypto_features error:", e)
+        print("  crypto_features error:", e)
         return None
 
 
@@ -299,44 +302,124 @@ def classify_market_type(title: str) -> str | None:
 
 # ── Polymarket API ─────────────────────────────────────────
 def gamma_markets(limit: int):
-    r = requests.get(
-        f"{GAMMA}/markets",
-        params={
-            "active": "true",
-            "closed": "false",
-            "archived": "false",
-            "limit": str(limit),
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
+    """
+    Gamma API から CLOB対応のアクティブ市場を取得。
+    ページネーション対応: 1回のリクエストで最大100件なので、ループで取得。
+    """
+    all_markets = []
+    offset = 0
+    page_size = min(limit, 100)  # Gamma API は1回100件が上限の場合がある
+
+    while len(all_markets) < limit:
+        try:
+            r = requests.get(
+                f"{GAMMA}/markets",
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "archived": "false",
+                    "enableOrderBook": "true",   # API側でフィルタ
+                    "limit": str(page_size),
+                    "offset": str(offset),
+                },
+                timeout=30,
+            )
+            r.raise_for_status()
+            page = r.json()
+        except Exception as e:
+            print(f"  gamma_markets page error (offset={offset}): {e}")
+            break
+
+        if not page or not isinstance(page, list):
+            break
+
+        all_markets.extend(page)
+        if len(page) < page_size:
+            break  # 最終ページ
+        offset += len(page)
+
+    print(f"[Gamma] Fetched {len(all_markets)} markets (requested up to {limit})")
+
+    # デバッグ: 最初の市場の構造を表示
+    if all_markets:
+        sample = all_markets[0]
+        print(f"[Gamma] Sample market keys: {list(sample.keys())[:15]}")
+        print(f"[Gamma] enableOrderBook = {sample.get('enableOrderBook')!r} (type={type(sample.get('enableOrderBook')).__name__})")
+        print(f"[Gamma] clobTokenIds = {str(sample.get('clobTokenIds', 'MISSING'))[:80]}")
+        end_date = sample.get("endDate") or sample.get("end_date_iso") or sample.get("endDateIso")
+        print(f"[Gamma] endDate = {end_date}")
+
+    return all_markets
 
 
 def extract_yes_token_ids(markets, max_tokens: int):
+    """
+    市場リストから YES トークン ID を抽出。
+    - enableOrderBook のチェックを堅牢化（string/bool両対応）
+    - 短期市場を優先（MAX_DAYS_TO_RESOLUTION以内）
+    - clobTokenIds は文字列JSON配列として返されることが多い
+    """
     token_ids = []
     picked = []
+    skipped_eob = 0
+    skipped_no_clob = 0
+    skipped_parse = 0
+    skipped_end_date = 0
+    now = datetime.now(timezone.utc)
+
     for m in markets:
         if len(token_ids) >= max_tokens:
             break
-        if not m.get("enableOrderBook", False):
+
+        # enableOrderBook チェック: bool True / string "true" 両対応
+        eob = m.get("enableOrderBook")
+        if eob is None:
+            eob = m.get("enable_order_book")  # snake_case フォールバック
+        if not (eob is True or str(eob).lower() == "true"):
+            skipped_eob += 1
             continue
 
+        # 短期市場フィルタ: 解決日が近い市場を優先
+        end_date_str = (
+            m.get("endDate")
+            or m.get("end_date_iso")
+            or m.get("endDateIso")
+            or ""
+        )
+        if end_date_str and MAX_DAYS_TO_RESOLUTION > 0:
+            try:
+                end_dt = datetime.fromisoformat(
+                    end_date_str.replace("Z", "+00:00")
+                )
+                days_left = (end_dt - now).total_seconds() / 86400
+                if days_left < 0 or days_left > MAX_DAYS_TO_RESOLUTION:
+                    skipped_end_date += 1
+                    continue
+            except Exception:
+                pass  # パースできない場合はフィルタしない
+
+        # clobTokenIds 取得
         v = m.get("clobTokenIds")
         if v is None:
+            v = m.get("clob_token_ids")  # snake_case フォールバック
+        if v is None:
+            skipped_no_clob += 1
             continue
 
+        # 文字列JSON → パース
         if isinstance(v, str):
             try:
                 v = json.loads(v)
             except Exception:
+                skipped_parse += 1
                 continue
 
+        # YES トークン抽出
         yes = None
         if isinstance(v, dict):
             yes = v.get("YES") or v.get("Yes") or v.get("yes")
         elif isinstance(v, list) and len(v) > 0:
-            yes = v[0]
+            yes = v[0]  # 配列の場合、index 0 = YES
 
         if yes:
             tid = str(yes)
@@ -344,52 +427,72 @@ def extract_yes_token_ids(markets, max_tokens: int):
             picked.append(
                 (tid, str(m.get("question") or m.get("title") or "unknown"))
             )
+
+    print(f"[Extract] Passed: {len(picked)}, "
+          f"Skipped: eob={skipped_eob}, no_clob={skipped_no_clob}, "
+          f"parse={skipped_parse}, end_date={skipped_end_date}")
     return token_ids, picked
+
+
+def _fetch_one_book(tid: str):
+    """1つのトークンのオーダーブックを取得（並列実行用）"""
+    tid = str(tid)
+    try:
+        r = requests.get(
+            f"{HOST}/book",
+            params={"token_id": tid},
+            timeout=30,
+        )
+        r.raise_for_status()
+        book = r.json() or {}
+    except Exception:
+        return tid, None
+
+    bids = book.get("bids") or []
+    asks = book.get("asks") or []
+
+    def _price(x):
+        if isinstance(x, dict):
+            raw = x.get("price")
+            if raw is not None:
+                return float(raw)
+            return None
+        if isinstance(x, (list, tuple)) and len(x) >= 1:
+            return float(x[0])
+        return None
+
+    best_bid = _price(bids[0]) if bids else None
+    best_ask = _price(asks[0]) if asks else None
+
+    if best_bid is None and best_ask is None:
+        return tid, None
+
+    result = {}
+    if best_ask is not None:
+        result["BUY"] = best_ask
+    if best_bid is not None:
+        result["SELL"] = best_bid
+    return tid, result
 
 
 def clob_prices(token_ids):
     """
+    並列でオーダーブックを取得。
     Returns: {tid: {"BUY": best_ask, "SELL": best_bid}, ...}
-    BUY  = price we pay to buy YES = best ask
-    SELL = price we get selling YES = best bid
     """
     out = {}
+    if not token_ids:
+        return out
 
-    for tid in token_ids:
-        tid = str(tid)
-        try:
-            r = requests.get(
-                f"{HOST}/book",
-                params={"token_id": tid},
-                timeout=30,
-            )
-            r.raise_for_status()
-            book = r.json() or {}
-        except Exception as e:
-            print(f"  clob_prices skip {tid[:12]}...: {e}")
-            continue
-
-        bids = book.get("bids") or []
-        asks = book.get("asks") or []
-
-        def _price(x):
-            if isinstance(x, dict):
-                return float(x.get("price", 0))
-            if isinstance(x, (list, tuple)) and len(x) >= 1:
-                return float(x[0])
-            return None
-
-        best_bid = _price(bids[0]) if bids else None
-        best_ask = _price(asks[0]) if asks else None
-
-        if best_bid is None and best_ask is None:
-            continue
-
-        out[tid] = {}
-        if best_ask is not None:
-            out[tid]["BUY"] = best_ask
-        if best_bid is not None:
-            out[tid]["SELL"] = best_bid
+    with ThreadPoolExecutor(max_workers=CLOB_WORKERS) as executor:
+        futures = {executor.submit(_fetch_one_book, tid): tid for tid in token_ids}
+        for future in as_completed(futures):
+            try:
+                tid, result = future.result()
+                if result:
+                    out[tid] = result
+            except Exception:
+                pass
 
     return out
 
@@ -431,13 +534,10 @@ def openai_fair_prob(
 
     if FAIR_MODE == "TITLE_ONLY":
         ctx_for_llm = {}
-        title_for_llm = title
     elif FAIR_MODE == "EXTERNAL_ONLY":
         ctx_for_llm = ctx
-        title_for_llm = title
     else:  # FULL
         ctx_for_llm = ctx
-        title_for_llm = title
 
     ext = safe_json(ctx_for_llm)
 
@@ -450,22 +550,25 @@ def openai_fair_prob(
     except Exception:
         ext_flags = "ext(weather=N, sports=N, crypto=N)"
 
+    # 改善されたシステムプロンプト: キャリブレーション重視
     SYSTEM = (
-        "You are an autonomous prediction-market trading agent.\n"
-        "The agent must survive.\n"
-        "It pays its own API costs from profit.\n"
-        "If balance hits 0, the agent dies.\n"
-        "Do not align blindly with market odds.\n"
-        "Use external data when informative.\n"
-        f"{ext_flags}\n"
-        "Return ONLY a number between 0 and 1.\n"
+        "You are a calibrated prediction-market probability estimator.\n"
+        "Your survival depends on accuracy - overconfidence kills.\n"
+        "\n"
+        "Rules:\n"
+        "1. Base rates matter. Most things don't happen. Default toward base rates.\n"
+        "2. Be skeptical of extreme probabilities. Rarely use values below 0.05 or above 0.95.\n"
+        "3. If you lack information, stay close to the market price - the market aggregates many participants' knowledge.\n"
+        "4. Only deviate significantly from market price when external data provides STRONG evidence of mispricing.\n"
+        "5. Account for the market's wisdom - many participants have already priced in public information.\n"
+        "6. Consider time to resolution - events further away have more uncertainty.\n"
+        f"\n{ext_flags}\n"
+        "Return ONLY a decimal number between 0 and 1. No explanation.\n"
     )
 
-    # FIX: Build USER prompt correctly with conditional lines
     user_lines = [
-        "Estimate fair probability (YES) for this Polymarket event.",
-        f"Title: {title_for_llm}",
-        f"FAIR_MODE: {FAIR_MODE}",
+        "Estimate the TRUE fair probability (YES) for this Polymarket event.",
+        f"Title: {title}",
     ]
     if FAIR_MODE == "EXTERNAL_ONLY":
         user_lines.append(
@@ -473,13 +576,14 @@ def openai_fair_prob(
             "rely ONLY on External context + prices."
         )
     user_lines.extend([
-        f"Current YES BUY price: {yes_buy}",
-        f"Current YES SELL price: {yes_sell}",
+        f"Current YES BUY (best ask): {yes_buy:.4f}",
+        f"Current YES SELL (best bid): {yes_sell:.4f}",
+        f"Market midpoint: {(yes_buy + yes_sell) / 2:.4f}",
         "",
         "External context (may include weather/crypto/sports/etc):",
         ext,
         "",
-        "Output format: just a decimal number in [0,1].",
+        "Output: just a decimal number in [0,1].",
     ])
     USER = "\n".join(user_lines)
 
@@ -505,7 +609,7 @@ def openai_fair_prob(
         data = r.json()
         text = data["choices"][0]["message"]["content"].strip()
 
-        # FIX: Extract number even if LLM returns extra text
+        # Extract number even if LLM returns extra text
         match = re.search(r"(0(?:\.\d+)?|1(?:\.0+)?)", text)
         if not match:
             print(f"  OpenAI returned non-numeric: {text!r}")
@@ -523,6 +627,11 @@ def openai_fair_prob(
 
 # ── Kelly Criterion ────────────────────────────────────────
 def kelly_fraction(p: float, price: float) -> float:
+    """
+    Binary market Kelly: price = cost per share, payout = 1 if win.
+    b = (1/price) - 1  (net payout ratio)
+    f* = (b*p - q) / b, capped at KELLY_MAX
+    """
     if price <= 0.0 or price >= 1.0:
         return 0.0
     b = (1.0 / price) - 1.0
@@ -558,7 +667,7 @@ def save_state(state_dir: str, state: dict):
 def main():
     dry_run = os.getenv("DRY_RUN", "1") == "1"
     scan_markets = int(os.getenv("SCAN_MARKETS", "1000"))
-    max_tokens = int(os.getenv("MAX_TOKENS", "500"))
+    max_tokens = int(os.getenv("MAX_TOKENS", "200"))
     min_order_usd = float(os.getenv("MIN_USD_ORDER", "1.0"))
     max_orders = int(os.getenv("MAX_ORDERS_PER_RUN", "1"))
     state_dir = os.getenv("STATE_DIR", "state")
@@ -585,16 +694,31 @@ def main():
     # Load persistent state
     state = load_state(state_dir)
 
-    # ── Scan markets ──
+    # ── Phase 1: Scan markets ──
+    print(f"\n{'='*60}")
+    print(f"POLYMARKET AUTONOMOUS AGENT")
+    print(f"Time: {datetime.now(timezone.utc).isoformat()}")
+    print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_TOKENS={max_tokens}")
+    print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX}, FEE_RATE={FEE_RATE}")
+    print(f"MAX_DAYS_TO_RESOLUTION={MAX_DAYS_TO_RESOLUTION}")
+    print(f"{'='*60}\n")
+
     markets = gamma_markets(scan_markets)
     token_ids, picked = extract_yes_token_ids(markets, max_tokens)
 
-    print(f"\n{'='*60}")
-    print(f"Starting market scan: {len(picked)} markets to evaluate")
-    print(f"DRY_RUN={dry_run}")
-    print(f"{'='*60}\n")
+    print(f"\nMarkets to evaluate: {len(picked)}")
 
-    # ── External context (best-effort) ──
+    if not picked:
+        msg = (
+            f"No tradable markets found.\n"
+            f"Gamma returned {len(markets)} markets but 0 passed filters.\n"
+            f"Check enableOrderBook, clobTokenIds, endDate filters."
+        )
+        print(msg)
+        gh_issue("run: 0 tradable markets", msg)
+        return
+
+    # ── Phase 2: External context (best-effort) ──
     try:
         sports_data = fetch_sports_context()
     except Exception as e:
@@ -614,42 +738,52 @@ def main():
         crypto_data = {"error": f"{type(e).__name__}: {e}"}
         print(f"* Crypto context error: {e}")
 
-    # ── Prices ──
+    # ── Phase 3: Prices (parallel) ──
     try:
         prices = clob_prices(token_ids)
-        print(f"* Prices fetched for {len(prices)} markets\n")
+        print(f"* Prices fetched for {len(prices)}/{len(token_ids)} markets\n")
     except Exception as e:
         prices = {}
         print(f"* clob_prices error: {type(e).__name__}: {e}")
 
+    # ── Phase 4: Evaluate ──
     decisions = []
     evaluated = 0
-    best = None  # (edge, th, title, tid, fair, buy, sell)
+    skipped_no_price = 0
+    skipped_invalid_price = 0
+    skipped_spread = 0
+    skipped_llm = 0
+    best = None  # (edge, th, title, tid, fair, price, side_str)
 
     for tid, title in picked:
         crypto_features_data = None
 
         p = prices.get(tid)
         if not p:
+            skipped_no_price += 1
             continue
+
         try:
             yes_buy = float(p.get("BUY", float("nan")))
             yes_sell = float(p.get("SELL", float("nan")))
         except (ValueError, TypeError):
+            skipped_invalid_price += 1
             continue
+
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
+            skipped_invalid_price += 1
             continue
 
         # Spread check
         spread = yes_buy - yes_sell
         if spread > SPREAD_MAX:
+            skipped_spread += 1
             continue
 
         if evaluated < 10:
             print(f"\n--- Market #{evaluated+1} ---")
             print(f"Title: {title[:80]}")
-            print(f"Token ID: {tid[:16]}...")
-            print(f"YES BUY: {yes_buy:.4f}, YES SELL: {yes_sell:.4f}")
+            print(f"YES BUY(ask): {yes_buy:.4f}, YES SELL(bid): {yes_sell:.4f}, Spread: {spread:.4f}")
 
         if "bitcoin" in title.lower() or "btc" in title.lower():
             crypto_features_data = crypto_features("bitcoin")
@@ -679,31 +813,47 @@ def main():
 
         fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
 
-        # FIX: Skip if LLM failed to return a valid probability
         if fair is None:
+            skipped_llm += 1
             if evaluated < 10:
-                print("Fair prob: FAILED (skipping)")
+                print("  Fair prob: FAILED (skipping)")
             evaluated += 1
             continue
 
-        # Edge: how much our fair value exceeds market price (for BUY YES)
-        edge = (fair - yes_buy) / yes_buy
+        # ── BUY YES edge ──
+        buy_edge = (fair - yes_buy) / yes_buy if yes_buy > 0 else -999
+        buy_net = buy_edge - FEE_RATE
 
-        # Account for fees in edge calculation
-        net_edge = edge - FEE_RATE
+        # ── SELL YES (= BUY NO) edge ──
+        # fair_no = 1 - fair, price_no = 1 - yes_sell
+        # edge_no = (fair_no - price_no) / price_no = (yes_sell - fair) / (1 - yes_sell)
+        sell_edge = (yes_sell - fair) / (1.0 - yes_sell) if yes_sell < 1.0 else -999
+        sell_net = sell_edge - FEE_RATE
+
+        # Pick the better side
+        if buy_net >= sell_net:
+            side_str = "BUY"
+            net_edge = buy_net
+            edge = buy_edge
+            exec_price = yes_buy
+        else:
+            side_str = "SELL"
+            net_edge = sell_net
+            edge = sell_edge
+            exec_price = yes_sell
 
         th = dynamic_edge_threshold(yes_buy, yes_sell)
 
         if evaluated < 10:
-            print(f"Fair prob: {fair:.4f}")
-            print(f"Edge: {edge:.4f}, Net edge: {net_edge:.4f} (threshold: {th:.4f})")
-            print(f"Pass: {'YES' if net_edge >= th else 'NO'}")
+            print(f"  Fair: {fair:.4f}, BUY edge: {buy_net:.4f}, SELL edge: {sell_net:.4f}")
+            print(f"  Best side: {side_str}, Net edge: {net_edge:.4f} (threshold: {th:.4f})")
+            print(f"  Pass: {'YES' if net_edge >= th else 'NO'}")
 
         if best is None or edge > best[0]:
-            best = (edge, th, title, tid, fair, yes_buy, yes_sell)
+            best = (edge, th, title, tid, fair, exec_price, side_str)
 
         if net_edge >= th:
-            decisions.append((net_edge, tid, title, fair, yes_buy, yes_sell))
+            decisions.append((net_edge, tid, title, fair, exec_price, side_str))
 
         evaluated += 1
 
@@ -712,26 +862,30 @@ def main():
     print("EVALUATION SUMMARY")
     print(f"{'='*60}")
     print(f"Total markets evaluated: {evaluated}")
+    print(f"Skipped: no_price={skipped_no_price}, invalid_price={skipped_invalid_price}, "
+          f"spread={skipped_spread}, llm_fail={skipped_llm}")
     print(f"Decisions found (net_edge >= threshold): {len(decisions)}")
 
     if best:
-        edge, th, title_b, tid_b, fair_b, buy_b, sell_b = best
+        edge, th, title_b, tid_b, fair_b, price_b, side_b = best
         print(f"\nBest opportunity:")
         print(f"  Title: {title_b[:80]}")
-        print(f"  Edge: {edge:.4f} (threshold: {th:.4f})")
-        print(f"  Fair: {fair_b:.4f}, Market BUY: {buy_b:.4f}")
-        print(f"  Token: {tid_b[:16]}...")
+        print(f"  Side: {side_b}, Edge: {edge:.4f} (threshold: {th:.4f})")
+        print(f"  Fair: {fair_b:.4f}, Exec price: {price_b:.4f}")
 
     if not decisions:
         print(f"\n-- No profitable opportunities found")
-        print(f"  - All {evaluated} markets had edge < threshold")
         best_info = ""
         if best:
             print(f"  - Best edge was {best[0]:.4f} (needed {best[1]:.4f})")
-            best_info = f"\nBest edge: {best[0]:.4f} (needed {best[1]:.4f})"
+            best_info = f"\nBest edge: {best[0]:.4f} (needed {best[1]:.4f}), side={best[6]}"
         gh_issue(
             "run: no edge (dynamic threshold)",
-            f"No mispricing found.\nEvaluated: {evaluated} markets{best_info}",
+            f"No mispricing found.\n"
+            f"Evaluated: {evaluated} markets\n"
+            f"Skipped: no_price={skipped_no_price}, invalid={skipped_invalid_price}, "
+            f"spread={skipped_spread}, llm={skipped_llm}"
+            f"{best_info}",
         )
         return
 
@@ -750,53 +904,96 @@ def main():
 
     executed = 0
     logs = []
-    for net_edge, tid, title, fair, yes_buy, yes_sell in decisions[:max_orders]:
-        f = kelly_fraction(fair, yes_buy)
+    trade_records = state.get("trades", [])
+
+    for net_edge, tid, title, fair, exec_price, side_str in decisions[:max_orders]:
+        # Kelly fraction: for SELL side, use (1-fair) and (1-exec_price) as NO probability
+        if side_str == "BUY":
+            f = kelly_fraction(fair, exec_price)
+        else:
+            f = kelly_fraction(1.0 - fair, 1.0 - exec_price)
+
         usd = bankroll * f
 
         if usd < min_order_usd:
             logs.append(
-                f"skip (too small): edge={net_edge:.3f} kelly={f:.4f} "
-                f"usd={usd:.2f} title={title}"
+                f"skip (too small): side={side_str} edge={net_edge:.3f} "
+                f"kelly={f:.4f} usd={usd:.2f} title={title}"
             )
             continue
 
-        size = usd / yes_buy
+        if side_str == "BUY":
+            size = usd / exec_price
+            order_side = BUY
+            order_price = exec_price
+        else:
+            size = usd / (1.0 - exec_price)
+            order_side = SELL
+            order_price = exec_price
 
         order = OrderArgs(
-            price=yes_buy,
+            price=order_price,
             size=size,
-            side=BUY,
+            side=order_side,
             token_id=tid,
         )
 
         if dry_run:
-            signed = client.create_order(order)
-            logs.append(
-                f"DRY_RUN build: edge={net_edge:.3f} fair={fair:.3f} "
-                f"buy={yes_buy:.3f} kelly={f:.4f} usd={usd:.2f} "
-                f"size={size:.4f} token={tid} title={title}"
-            )
+            try:
+                signed = client.create_order(order)
+                logs.append(
+                    f"DRY_RUN build: side={side_str} edge={net_edge:.3f} "
+                    f"fair={fair:.3f} price={exec_price:.3f} kelly={f:.4f} "
+                    f"usd={usd:.2f} size={size:.4f} token={tid[:16]}... "
+                    f"title={title[:60]}"
+                )
+            except Exception as e:
+                logs.append(
+                    f"DRY_RUN build FAILED: side={side_str} edge={net_edge:.3f} "
+                    f"error={type(e).__name__}: {e} title={title[:60]}"
+                )
         else:
-            signed = client.create_order(order)
-            resp = client.post_order(signed)
-            logs.append(
-                f"LIVE post: edge={net_edge:.3f} fair={fair:.3f} "
-                f"buy={yes_buy:.3f} kelly={f:.4f} usd={usd:.2f} "
-                f"size={size:.4f} token={tid} title={title}\nresp={resp}"
-            )
-            executed += 1
+            try:
+                signed = client.create_order(order)
+                resp = client.post_order(signed)
+                logs.append(
+                    f"LIVE post: side={side_str} edge={net_edge:.3f} "
+                    f"fair={fair:.3f} price={exec_price:.3f} kelly={f:.4f} "
+                    f"usd={usd:.2f} size={size:.4f} token={tid[:16]}... "
+                    f"title={title[:60]}\nresp={resp}"
+                )
+                executed += 1
+            except Exception as e:
+                logs.append(
+                    f"LIVE post FAILED: side={side_str} edge={net_edge:.3f} "
+                    f"error={type(e).__name__}: {e} title={title[:60]}"
+                )
+
+        # Trade record for history
+        trade_records.append({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "tid": tid[:20],
+            "title": title[:100],
+            "side": side_str,
+            "fair": round(fair, 4),
+            "price": round(exec_price, 4),
+            "edge": round(net_edge, 4),
+            "usd": round(usd, 2),
+            "kelly": round(f, 4),
+            "dry_run": dry_run,
+        })
 
     # Update state
     state["last_run"] = datetime.now(timezone.utc).isoformat()
     state["last_evaluated"] = evaluated
     state["last_decisions"] = len(decisions)
     state["last_executed"] = executed
+    state["trades"] = trade_records[-200:]  # 直近200件を保持
     save_state(state_dir, state)
 
     title_issue = (
         f"run: {'DRY_RUN' if dry_run else 'LIVE'} "
-        f"decisions={len(decisions)} executed={executed}"
+        f"eval={evaluated} decisions={len(decisions)} executed={executed}"
     )
     body = "\n".join(logs[:50])
     gh_issue(title_issue, body)
