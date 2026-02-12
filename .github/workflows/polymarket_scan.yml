@@ -45,7 +45,7 @@ jobs:
           MIN_VOLUME: "1000"        # minimum trading volume
           MIN_LIQUIDITY: "500"      # minimum liquidity
           CLOB_WORKERS: "10"        # parallel price fetching threads
-          BATCH_SIZE: "10"          # markets per blind screening batch
+          BATCH_SIZE: "5"           # markets per blind screening batch (smaller = better quality)
           CANDIDATE_MIN_DIFF: "0.03" # 3% min |blind_estimate - market| to be candidate
           STATE_DIR: "state"
         run: python agent.py

@@ -26,7 +26,7 @@ SPREAD_MAX = float(os.getenv("SPREAD_MAX", "0.15"))
 MIN_VOLUME = float(os.getenv("MIN_VOLUME", "1000"))
 MIN_LIQUIDITY = float(os.getenv("MIN_LIQUIDITY", "500"))
 CLOB_WORKERS = int(os.getenv("CLOB_WORKERS", "10"))
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "10"))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
 CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.03"))
 
 
@@ -527,38 +527,133 @@ def clob_prices(token_ids):
 
 
 # ── Dynamic Edge Threshold ─────────────────────────────────
-def dynamic_edge_threshold(yes_buy: float, yes_sell: float) -> float:
+def dynamic_edge_threshold(yes_buy: float, yes_sell: float, has_data: bool = False) -> float:
     """
     Adapts minimum edge threshold based on market conditions.
-    Tighter spreads = lower threshold (more liquid = more reliable prices).
+    has_data=True means we have objective external data (weather, crypto prices)
+    which gives us more confidence in our estimate.
     """
     if yes_buy <= 0.03 or yes_buy >= 0.97:
-        return 0.10
+        return 0.12
     if yes_sell <= 0 or yes_sell >= 1:
-        return 0.10
+        return 0.12
 
     spread = max(0.0, yes_buy - yes_sell)
 
+    # Base thresholds
     if spread <= 0.01:
-        return 0.03   # Very liquid market: 3% edge sufficient
-    if spread <= 0.03:
-        return 0.05   # Liquid market: 5% edge
-    if spread <= 0.06:
-        return 0.07   # Moderate spread: 7% edge
-    return 0.10        # Wide spread: 10% edge
+        base = 0.04
+    elif spread <= 0.03:
+        base = 0.06
+    elif spread <= 0.06:
+        base = 0.08
+    else:
+        base = 0.10
+
+    # Data-backed markets get lower thresholds (higher confidence)
+    if has_data:
+        base = max(0.03, base - 0.02)
+
+    return base
 
 
-# ── Batch Blind Screening (Phase 1) ───────────────────────
+# ── Individual Blind Evaluation (NO market prices shown) ───
+def individual_blind_eval(
+    title: str,
+    external_context: dict | None,
+    api_key: str,
+    model: str,
+) -> float | None:
+    """
+    High-quality individual probability estimation.
+    CRITICAL: Does NOT show market prices. The LLM forms a completely
+    independent view based on the question and external data only.
+    The resulting estimate is compared to market price AFTER the LLM returns.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ctx = safe_json(external_context or {})
+
+    system = (
+        "You are an expert probability estimator for prediction markets.\n"
+        f"Today's date: {today}\n"
+        "\n"
+        "Your task: Estimate the probability that the given event resolves YES.\n"
+        "\n"
+        "Think carefully about:\n"
+        "1. BASE RATES: What is the historical frequency of similar events?\n"
+        "2. CURRENT CONTEXT: What do you know about the current situation?\n"
+        "3. EXTERNAL DATA: If provided, use real data (prices, weather, news) heavily.\n"
+        "4. TIME: How much time remains? More time = more uncertainty toward 50%.\n"
+        "5. SPECIFICITY: Narrow outcomes (exact ranges) are less likely than broad ones.\n"
+        "\n"
+        "Be calibrated and precise. Use the full range [0.05, 0.95].\n"
+        "Think step-by-step in 2-3 sentences, then give your probability.\n"
+        "Final line must be: PROBABILITY: X.XX\n"
+    )
+
+    user = (
+        f"Event: {title}\n"
+        f"\nExternal data (if available):\n{ctx}\n"
+        f"\nAnalyze and estimate the YES probability:"
+    )
+
+    try:
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "temperature": 0.3,
+                "max_tokens": 200,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"].strip()
+
+        # Try to find "PROBABILITY: X.XX" pattern first
+        match = re.search(r"PROBABILITY:\s*(0(?:\.\d+)?|1(?:\.0+)?)", text, re.IGNORECASE)
+        if not match:
+            # Fallback: find any decimal number in the last line
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
+            if lines:
+                match = re.search(r"(0(?:\.\d+)?|1(?:\.0+)?)", lines[-1])
+        if not match:
+            # Final fallback: find any decimal in the whole text
+            match = re.search(r"(0\.\d+)", text)
+
+        if not match:
+            print(f"    individual_blind_eval: no probability found in: {text[:100]!r}")
+            return None
+
+        p = float(match.group(1))
+        if 0.0 <= p <= 1.0:
+            return p
+        return None
+
+    except Exception as e:
+        print(f"    individual_blind_eval error: {e}")
+        return None
+
+
+# ── Batch Blind Screening (Phase 1 - quick filter) ────────
 def batch_blind_screen(markets_batch, api_key, model):
     """
-    Estimate fair probabilities for a batch of markets WITHOUT showing
-    market prices. This prevents anchoring to market prices and forces
-    the LLM to form independent judgments.
-
+    Quick batch screening WITHOUT market prices.
+    Uses smaller batches (5) with today's date for better quality.
     Returns: dict of {batch_index: probability}
     """
     if not markets_batch:
         return {}
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     lines = []
     for i, m in enumerate(markets_batch):
@@ -566,25 +661,27 @@ def batch_blind_screen(markets_batch, api_key, model):
 
     system = (
         "You are a calibrated probability estimator for prediction markets.\n"
+        f"Today's date: {today}\n"
+        "\n"
         "For each question, estimate the probability that YES is correct.\n"
         "\n"
         "Guidelines:\n"
-        "- Use your knowledge of current events, historical base rates, and domain expertise.\n"
-        "- Be INDEPENDENT. Form your own view. Do NOT default to 50%.\n"
-        "- Consider what is actually likely given real-world evidence.\n"
-        "- For events that are very likely, use high probabilities (0.80-0.95).\n"
-        "- For events that are unlikely, use low probabilities (0.05-0.20).\n"
-        "- Be specific: 0.73 is better than 0.70. Use your best judgment.\n"
+        "- Use your knowledge of current events, base rates, and domain expertise.\n"
+        "- Be INDEPENDENT. Form your own view.\n"
+        "- Think about what is actually likely given everything you know.\n"
+        "- Consider: Is this event common or rare? What are the base rates?\n"
+        "- For narrow ranges (e.g., 'between X and Y'), probabilities are usually 0.05-0.30.\n"
+        "- For broad events that seem likely, use 0.60-0.90.\n"
+        "- For things that probably won't happen, use 0.05-0.25.\n"
+        "- Be specific and use the FULL range. 0.73 is better than 0.70.\n"
         "\n"
-        "Output format: One probability per line.\n"
-        "Example:\n"
-        "1: 0.35\n"
-        "2: 0.72\n"
-        "3: 0.08\n"
+        "Output: one probability per line.\n"
+        "Format: NUMBER: PROBABILITY\n"
+        "Example:\n1: 0.35\n2: 0.72\n3: 0.08\n"
     )
 
     user = (
-        "Estimate the YES probability for each prediction market question:\n\n"
+        "Estimate the YES probability for each:\n\n"
         + "\n".join(lines)
         + "\n\nProbabilities:"
     )
@@ -598,8 +695,8 @@ def batch_blind_screen(markets_batch, api_key, model):
             },
             json={
                 "model": model,
-                "temperature": 0.2,
-                "max_tokens": len(markets_batch) * 12 + 50,
+                "temperature": 0.3,
+                "max_tokens": len(markets_batch) * 15 + 50,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -629,174 +726,8 @@ def batch_blind_screen(markets_batch, api_key, model):
         return {}
 
 
-# ── Detailed Confirmation (Phase 2) ───────────────────────
-def detailed_confirm(
-    title: str,
-    blind_prob: float,
-    yes_buy: float,
-    yes_sell: float,
-    external_context: dict | None,
-    api_key: str,
-    model: str,
-) -> float | None:
-    """
-    Detailed evaluation of a candidate market where blind screening
-    found a potential edge. Shows market prices and context, but
-    emphasizes independent assessment.
-
-    Returns: refined fair probability or None
-    """
-    ctx = safe_json(external_context or {})
-    midpoint = (yes_buy + yes_sell) / 2.0
-
-    system = (
-        "You are a prediction market analyst.\n"
-        "You independently estimated this event's probability WITHOUT seeing the market price.\n"
-        "Now you see the market price and additional data. Decide if the market is mispriced.\n"
-        "\n"
-        "Key principles:\n"
-        "1. Your independent estimate was formed without price bias - respect it.\n"
-        "2. Markets are often efficient BUT mispricing exists, especially:\n"
-        "   - When recent data (weather forecasts, real-time prices) hasn't been absorbed\n"
-        "   - In low-attention or niche markets\n"
-        "   - When crowd psychology causes herding (political/emotional markets)\n"
-        "   - When objective data contradicts market sentiment\n"
-        "3. If external data supports your estimate over the market price, TRUST YOUR DATA.\n"
-        "4. Don't just average your estimate with the market. Take a firm position.\n"
-        "5. It's OK to disagree significantly with the market when you have evidence.\n"
-        "\n"
-        "Return ONLY a decimal number between 0 and 1. No explanation.\n"
-    )
-
-    user = (
-        f"Question: {title}\n"
-        f"\nYour independent estimate (blind): {blind_prob:.3f}\n"
-        f"Market YES price (midpoint): {midpoint:.4f}\n"
-        f"  (bid: {yes_sell:.4f}, ask: {yes_buy:.4f})\n"
-        f"Difference: your estimate is {blind_prob - midpoint:+.3f} from market\n"
-        f"\nExternal data:\n{ctx}\n"
-        f"\nGive your FINAL fair probability:"
-    )
-
-    try:
-        r = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "temperature": 0.0,
-                "max_tokens": 16,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-        text = r.json()["choices"][0]["message"]["content"].strip()
-
-        match = re.search(r"(0(?:\.\d+)?|1(?:\.0+)?)", text)
-        if not match:
-            print(f"  detailed_confirm: non-numeric response: {text!r}")
-            return None
-        p = float(match.group(1))
-        if 0.0 <= p <= 1.0:
-            return p
-        return None
-
-    except Exception as e:
-        print(f"  detailed_confirm error: {e}")
-        return None
-
-
-# ── Legacy LLM Fair Probability (fallback) ─────────────────
-def openai_fair_prob(
-    title: str,
-    yes_buy: float,
-    yes_sell: float,
-    external_context: dict | None = None,
-) -> float | None:
-    """
-    Single-market fair probability estimation.
-    Used as fallback when batch screening isn't available.
-    NOTE: Does NOT show market prices to avoid anchoring.
-    """
-    api_key = env("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    ctx = external_context or {}
-    ext = safe_json(ctx)
-
-    SYSTEM = (
-        "You are a calibrated prediction-market probability estimator.\n"
-        "Estimate the TRUE probability that this event resolves YES.\n"
-        "\n"
-        "Rules:\n"
-        "1. Base rates matter. Most things don't happen. Default toward base rates.\n"
-        "2. Be specific: 0.73 is better than 0.70.\n"
-        "3. Use external data when available (weather, crypto prices, sports news).\n"
-        "4. Be skeptical of extreme probabilities. Rarely use values below 0.05 or above 0.95.\n"
-        "5. Form your OWN view based on evidence. Be independent.\n"
-        "\n"
-        "Return ONLY a decimal number between 0 and 1. No explanation.\n"
-    )
-
-    user_lines = [
-        "Estimate the TRUE fair probability (YES) for this prediction market event.",
-        f"Title: {title}",
-        "",
-        "External context (may include weather/crypto/sports/etc):",
-        ext,
-        "",
-        "Output: just a decimal number in [0,1].",
-    ]
-    USER = "\n".join(user_lines)
-
-    try:
-        r = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "temperature": 0.2,
-                "max_tokens": 16,
-                "messages": [
-                    {"role": "system", "content": SYSTEM},
-                    {"role": "user", "content": USER},
-                ],
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-        data = r.json()
-        text = data["choices"][0]["message"]["content"].strip()
-
-        match = re.search(r"(0(?:\.\d+)?|1(?:\.0+)?)", text)
-        if not match:
-            return None
-        p = float(match.group(1))
-        if not (0.0 <= p <= 1.0):
-            return None
-        return p
-
-    except Exception as e:
-        print(f"  OpenAI error: {type(e).__name__}: {e}")
-        return None
-
-
 # ── Kelly Criterion (Half-Kelly for safety) ────────────────
 def kelly_fraction(p: float, price: float) -> float:
-    """
-    Half-Kelly sizing: reduces variance while maintaining positive
-    expected growth. Full Kelly is theoretically optimal but volatile.
-    """
     if price <= 0.0 or price >= 1.0:
         return 0.0
     b = (1.0 / price) - 1.0
@@ -829,17 +760,15 @@ def save_state(state_dir: str, state: dict):
         json.dump(state, fh, indent=2)
 
 
-# ── Edge Calculation Helpers ──────────────────────────────
+# ── Edge Calculation ──────────────────────────────────────
 def calculate_edge(fair: float, yes_buy: float, yes_sell: float):
     """
-    Calculate edges for both BUY YES and SELL YES (= BUY NO) sides.
+    Calculate edges for both BUY YES and SELL YES sides.
     Returns: (side_str, net_edge, raw_edge, exec_price)
     """
-    # BUY YES edge
     buy_edge = (fair - yes_buy) / yes_buy if yes_buy > 0 else -999
     buy_net = buy_edge - FEE_RATE
 
-    # SELL YES (= BUY NO) edge
     sell_edge = (yes_sell - fair) / (1.0 - yes_sell) if yes_sell < 1.0 else -999
     sell_net = sell_edge - FEE_RATE
 
@@ -884,7 +813,7 @@ def main():
 
     # ── Phase 1: Scan markets ──
     print(f"\n{'='*60}")
-    print(f"POLYMARKET AUTONOMOUS AGENT (v2 - Two-Phase Evaluation)")
+    print(f"POLYMARKET AUTONOMOUS AGENT (v3 - Full Blind Pipeline)")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_EVAL={max_tokens}")
     print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX} (half-Kelly)")
@@ -894,7 +823,6 @@ def main():
     print(f"{'='*60}\n")
 
     markets = gamma_markets(scan_markets)
-
     tradable = extract_tradable_markets(markets, max_tokens)
 
     print(f"\nTradable markets: {len(tradable)}")
@@ -961,7 +889,6 @@ def main():
     print("\n== Phase 4a: Weather markets (direct data) ==")
     decisions = []
     weather_count = 0
-    weather_edge_count = 0
 
     for mkt in tradable:
         if classify_market_type(mkt["title"]) != "weather":
@@ -975,19 +902,17 @@ def main():
 
         yes_buy = mkt["yes_buy"]
         yes_sell = mkt["yes_sell"]
-
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
             continue
 
         side_str, net_edge, raw_edge, exec_price = calculate_edge(wp, yes_buy, yes_sell)
-        th = dynamic_edge_threshold(yes_buy, yes_sell)
+        th = dynamic_edge_threshold(yes_buy, yes_sell, has_data=True)
 
         print(f"  Weather: {mkt['title'][:60]}")
         print(f"    Data prob: {wp:.4f}, Market: {(yes_buy+yes_sell)/2:.4f}, "
               f"Edge: {net_edge:.4f} (threshold: {th:.4f})")
 
         if net_edge >= th:
-            weather_edge_count += 1
             decisions.append({
                 "net_edge": net_edge,
                 "tid": mkt["tid"],
@@ -998,12 +923,12 @@ def main():
                 "source": "weather_data",
             })
 
-    print(f"  Weather markets: {weather_count}, with edge: {weather_edge_count}")
+    print(f"  Weather markets: {weather_count}, with edge: {len([d for d in decisions if d['source']=='weather_data'])}")
 
-    # ── Phase 4b: Blind batch screening (non-weather markets) ──
+    # ── Phase 4b: Blind batch screening (quick pre-filter) ──
     print(f"\n== Phase 4b: Blind batch screening ==")
 
-    # Sort by priority: crypto first (real-time data), then sports, then general
+    # Sort by priority: crypto > sports > general
     non_weather = []
     for mkt in tradable:
         mtype = classify_market_type(mkt["title"])
@@ -1011,7 +936,6 @@ def main():
             continue
         if not (0.0 < mkt["yes_buy"] < 1.0 and 0.0 < mkt["yes_sell"] < 1.0):
             continue
-        # Priority: crypto=0, sports=1, general=2
         priority = 2
         if mtype == "crypto":
             priority = 0
@@ -1041,7 +965,6 @@ def main():
             if global_idx < len(non_weather_markets):
                 blind_estimates[global_idx] = prob
 
-        # Small delay between batches to respect rate limits
         if i + BATCH_SIZE < len(non_weather_markets):
             time.sleep(0.3)
 
@@ -1065,32 +988,33 @@ def main():
                 "mkt": mkt,
             })
 
-    # Sort by largest difference (most likely mispriced)
     candidates.sort(key=lambda x: x["abs_diff"], reverse=True)
-    # Limit to top 50 for detailed evaluation
     candidates = candidates[:50]
 
     print(f"  Candidates with |blind - market| >= {CANDIDATE_MIN_DIFF}: {len(candidates)}")
     if candidates:
-        print(f"  Top candidate diff: {candidates[0]['abs_diff']:.4f}")
+        top = candidates[0]
+        print(f"  Top: diff={top['abs_diff']:.3f}, blind={top['blind_prob']:.3f}, "
+              f"market={(top['mkt']['yes_buy']+top['mkt']['yes_sell'])/2:.3f}, "
+              f"title={top['mkt']['title'][:50]}")
 
-    # ── Phase 4d: Detailed confirmation ──
-    print(f"\n== Phase 4d: Detailed confirmation ==")
+    # ── Phase 4d: Individual blind evaluation (NO market prices) ──
+    # This is the KEY difference from v2: we do NOT show market prices
+    # to the LLM at any point. The LLM gives a fully independent estimate.
+    print(f"\n== Phase 4d: Individual blind evaluation (NO prices shown to LLM) ==")
 
-    confirmed = 0
-    skipped_confirm = 0
+    eval_count = 0
+    eval_fail = 0
 
     for cand in candidates:
         mkt = cand["mkt"]
-        blind_prob = cand["blind_prob"]
         title = mkt["title"]
         yes_buy = mkt["yes_buy"]
         yes_sell = mkt["yes_sell"]
         tid = mkt["tid"]
-
-        # Build context for this specific market
         mtype = classify_market_type(title)
 
+        # Build external context (data only, NO prices)
         crypto_features_data = None
         if "bitcoin" in title.lower() or "btc" in title.lower():
             crypto_features_data = crypto_features("bitcoin")
@@ -1099,35 +1023,34 @@ def main():
         elif "solana" in title.lower() or "sol" in title.lower():
             crypto_features_data = crypto_features("solana")
 
-        ctx = {
-            "weather": None,
-            "sports": sports_data if mtype == "sports" else None,
-            "crypto": {"base": crypto_data, "features": crypto_features_data}
-            if mtype == "crypto" or crypto_features_data
-            else None,
-        }
+        has_data = False
+        ctx = {}
+        if mtype == "sports" and sports_data:
+            ctx["sports_news"] = sports_data
+            has_data = True
+        if mtype == "crypto" or crypto_features_data:
+            ctx["crypto"] = {"base": crypto_data, "features": crypto_features_data}
+            has_data = True
 
-        # Detailed LLM confirmation
-        fair = detailed_confirm(
-            title, blind_prob, yes_buy, yes_sell, ctx, api_key, model
-        )
+        # Individual evaluation - LLM NEVER sees market prices
+        fair = individual_blind_eval(title, ctx if ctx else None, api_key, model)
 
         if fair is None:
-            skipped_confirm += 1
+            eval_fail += 1
             continue
 
-        confirmed += 1
+        eval_count += 1
 
-        # Calculate edge with confirmed probability
+        # NOW compare blind estimate to market price (LLM never saw this)
         side_str, net_edge, raw_edge, exec_price = calculate_edge(fair, yes_buy, yes_sell)
-        th = dynamic_edge_threshold(yes_buy, yes_sell)
+        th = dynamic_edge_threshold(yes_buy, yes_sell, has_data=has_data)
 
         midpoint = (yes_buy + yes_sell) / 2.0
-        print(f"\n  [{confirmed}] {title[:70]}")
-        print(f"    Blind: {blind_prob:.3f}, Confirmed: {fair:.3f}, "
-              f"Market: {midpoint:.3f}")
-        print(f"    Side: {side_str}, Net edge: {net_edge:.4f} "
-              f"(threshold: {th:.4f}) -> {'PASS' if net_edge >= th else 'FAIL'}")
+        print(f"\n  [{eval_count}] {title[:65]}")
+        print(f"    LLM estimate: {fair:.3f} (blind batch was: {cand['blind_prob']:.3f})")
+        print(f"    Market: {midpoint:.3f} (LLM never saw this)")
+        print(f"    Side: {side_str}, Edge: {net_edge:.4f} (threshold: {th:.4f}) "
+              f"-> {'PASS' if net_edge >= th else 'FAIL'}")
 
         if net_edge >= th:
             decisions.append({
@@ -1137,24 +1060,23 @@ def main():
                 "fair": fair,
                 "exec_price": exec_price,
                 "side": side_str,
-                "source": "llm_two_phase",
+                "source": f"blind_eval_{'data' if has_data else 'llm'}",
             })
 
-        # Small delay between confirmation calls
         time.sleep(0.2)
 
-    print(f"\n  Confirmed: {confirmed}, LLM failures: {skipped_confirm}")
+    print(f"\n  Evaluated: {eval_count}, LLM failures: {eval_fail}")
 
     # ── Summary ──
     print(f"\n{'='*60}")
     print("EVALUATION SUMMARY")
     print(f"{'='*60}")
-    print(f"Total tradable markets: {len(tradable)}")
-    print(f"Weather markets evaluated: {weather_count}")
-    print(f"Non-weather screened (blind): {len(blind_estimates)}")
-    print(f"Candidates for confirmation: {len(candidates)}")
-    print(f"Confirmed evaluations: {confirmed}")
-    print(f"Total decisions (edge >= threshold): {len(decisions)}")
+    print(f"Total tradable: {len(tradable)}")
+    print(f"Weather evaluated: {weather_count}")
+    print(f"Blind screened: {len(blind_estimates)}")
+    print(f"Candidates: {len(candidates)}")
+    print(f"Individually evaluated: {eval_count}")
+    print(f"Decisions (edge >= threshold): {len(decisions)}")
 
     if decisions:
         decisions.sort(key=lambda x: x["net_edge"], reverse=True)
@@ -1172,15 +1094,17 @@ def main():
             best_info = (
                 f"\nClosest candidate: diff={best_cand['abs_diff']:.4f}, "
                 f"blind={best_cand['blind_prob']:.3f}, "
+                f"market={(best_cand['mkt']['yes_buy']+best_cand['mkt']['yes_sell'])/2:.3f}, "
                 f"title={best_cand['mkt']['title'][:60]}"
             )
         gh_issue(
             "run: no edge found",
-            f"Two-phase evaluation found no opportunities.\n"
+            f"v3 Full-blind pipeline found no opportunities.\n"
             f"Tradable: {len(tradable)}\n"
             f"Blind screened: {len(blind_estimates)}\n"
             f"Candidates: {len(candidates)}\n"
-            f"Confirmed: {confirmed}"
+            f"Individually evaluated: {eval_count}\n"
+            f"LLM failures: {eval_fail}"
             f"{best_info}",
         )
         return
@@ -1288,7 +1212,6 @@ def main():
             "source": d["source"],
         })
 
-    # Print execution results
     print(f"\nOrders attempted: {min(len(decisions), max_orders)}")
     print(f"Executed: {executed}")
     for log in logs:
@@ -1299,6 +1222,7 @@ def main():
     state["last_tradable"] = len(tradable)
     state["last_blind_screened"] = len(blind_estimates)
     state["last_candidates"] = len(candidates)
+    state["last_individually_evaluated"] = eval_count
     state["last_decisions"] = len(decisions)
     state["last_executed"] = executed
     state["trades"] = trade_records[-200:]
