@@ -29,23 +29,23 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
           # FULL = Title + External context (recommended)
-          # TITLE_ONLY = Title only
-          # EXTERNAL_ONLY = External context only (not recommended)
           FAIR_MODE: "FULL"
 
           DRY_RUN: "1"              # 1=dry run, 0=live trading
           SCAN_MARKETS: "1000"
-          MAX_TOKENS: "200"         # LLM evaluation count
-          MAX_ORDERS_PER_RUN: "1"
+          MAX_TOKENS: "500"         # Max markets to evaluate (increased from 200)
+          MAX_ORDERS_PER_RUN: "5"   # Up to 5 trades per run (was 1)
           BANKROLL_USD: "50"
           MIN_USD_ORDER: "1.0"
-          EDGE_MIN: "0.08"
-          KELLY_MAX: "0.06"
+          EDGE_MIN: "0.05"          # 5% baseline (dynamic threshold adjusts per market)
+          KELLY_MAX: "0.06"         # 6% max Kelly fraction (applied as half-Kelly)
           FEE_RATE: "0.00"
           SLIPPAGE_MAX: "0.01"
-          SPREAD_MAX: "0.15"        # 15 cents (was 5, too restrictive)
+          SPREAD_MAX: "0.15"        # 15 cents max bid-ask spread
           MIN_VOLUME: "1000"        # minimum trading volume
           MIN_LIQUIDITY: "500"      # minimum liquidity
           CLOB_WORKERS: "10"        # parallel price fetching threads
+          BATCH_SIZE: "10"          # markets per blind screening batch
+          CANDIDATE_MIN_DIFF: "0.03" # 3% min |blind_estimate - market| to be candidate
           STATE_DIR: "state"
         run: python agent.py
