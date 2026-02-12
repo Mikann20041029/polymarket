@@ -18,7 +18,7 @@ GAMMA = "https://gamma-api.polymarket.com"
 OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search"
 OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
 
-EDGE_MIN = float(os.getenv("EDGE_MIN", "0.08"))
+EDGE_MIN = float(os.getenv("EDGE_MIN", "0.05"))
 KELLY_MAX = float(os.getenv("KELLY_MAX", "0.06"))
 FEE_RATE = float(os.getenv("FEE_RATE", "0.00"))
 SLIPPAGE_MAX = float(os.getenv("SLIPPAGE_MAX", "0.01"))
@@ -26,6 +26,8 @@ SPREAD_MAX = float(os.getenv("SPREAD_MAX", "0.15"))
 MIN_VOLUME = float(os.getenv("MIN_VOLUME", "1000"))
 MIN_LIQUIDITY = float(os.getenv("MIN_LIQUIDITY", "500"))
 CLOB_WORKERS = int(os.getenv("CLOB_WORKERS", "10"))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "10"))
+CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.03"))
 
 
 # ── Utility ────────────────────────────────────────────────
@@ -66,7 +68,6 @@ def safe_get_json(url: str, params: dict, timeout=20):
 
 
 def safe_float(val, default=0.0) -> float:
-    """安全にfloatに変換。None, 空文字, パース失敗時はdefaultを返す"""
     if val is None:
         return default
     try:
@@ -77,18 +78,24 @@ def safe_float(val, default=0.0) -> float:
 
 # ── GitHub Issue Reporter ──────────────────────────────────
 def gh_issue(title: str, body: str):
-    token = env("GITHUB_TOKEN")
-    repo = env("GITHUB_REPOSITORY")
-    r = requests.post(
-        f"https://api.github.com/repos/{repo}/issues",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        },
-        json={"title": title, "body": body},
-        timeout=30,
-    )
-    r.raise_for_status()
+    token = os.getenv("GITHUB_TOKEN")
+    repo = os.getenv("GITHUB_REPOSITORY")
+    if not token or not repo:
+        print(f"[GH Issue] (skipped, no token/repo) {title}")
+        return
+    try:
+        r = requests.post(
+            f"https://api.github.com/repos/{repo}/issues",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"title": title, "body": body},
+            timeout=30,
+        )
+        r.raise_for_status()
+    except Exception as e:
+        print(f"[GH Issue] Failed to post: {e}")
 
 
 # ── External Data: Crypto ─────────────────────────────────
@@ -313,10 +320,6 @@ def classify_market_type(title: str) -> str | None:
 
 # ── Polymarket API ─────────────────────────────────────────
 def gamma_markets(limit: int):
-    """
-    Gamma API から CLOB対応のアクティブ市場を取得。
-    ページネーション対応。
-    """
     all_markets = []
     offset = 0
     page_size = min(limit, 100)
@@ -351,7 +354,6 @@ def gamma_markets(limit: int):
 
     print(f"[Gamma] Fetched {len(all_markets)} markets (requested up to {limit})")
 
-    # デバッグ: 最初の市場の構造を表示
     if all_markets:
         sample = all_markets[0]
         keys = list(sample.keys())
@@ -361,20 +363,11 @@ def gamma_markets(limit: int):
         print(f"[Gamma] bestBid={sample.get('bestBid')!r}, bestAsk={sample.get('bestAsk')!r}")
         print(f"[Gamma] outcomePrices={str(sample.get('outcomePrices', 'MISSING'))[:80]}")
         print(f"[Gamma] volume={sample.get('volume')!r}, liquidity={sample.get('liquidity')!r}")
-        print(f"[Gamma] endDate={sample.get('endDate')!r}")
-        print(f"[Gamma] question={str(sample.get('question', ''))[:80]}")
 
     return all_markets
 
 
 def extract_tradable_markets(markets, max_tokens: int):
-    """
-    市場リストから取引可能な市場を抽出。
-    Gamma APIのフィールドを最大限活用して事前フィルタ。
-
-    Returns: list of dict with keys:
-      tid, title, yes_buy, yes_sell, best_bid, best_ask
-    """
     results = []
     skipped_eob = 0
     skipped_no_clob = 0
@@ -387,7 +380,6 @@ def extract_tradable_markets(markets, max_tokens: int):
         if len(results) >= max_tokens:
             break
 
-        # ── Filter 1: enableOrderBook (string/bool両対応) ──
         eob = m.get("enableOrderBook")
         if eob is None:
             eob = m.get("enable_order_book")
@@ -395,7 +387,6 @@ def extract_tradable_markets(markets, max_tokens: int):
             skipped_eob += 1
             continue
 
-        # ── Filter 2: clobTokenIds → YES token ID 取得 ──
         v = m.get("clobTokenIds")
         if v is None:
             v = m.get("clob_token_ids")
@@ -422,12 +413,9 @@ def extract_tradable_markets(markets, max_tokens: int):
 
         tid = str(yes_tid)
 
-        # ── Filter 3: 価格取得（Gamma APIのフィールドを活用） ──
-        # bestBid/bestAsk が使える場合はそれを使う
         best_bid = safe_float(m.get("bestBid"))
         best_ask = safe_float(m.get("bestAsk"))
 
-        # outcomePrices からもフォールバック
         if best_bid <= 0 or best_ask <= 0:
             op = m.get("outcomePrices")
             if op:
@@ -437,8 +425,6 @@ def extract_tradable_markets(markets, max_tokens: int):
                     if isinstance(op, list) and len(op) >= 1:
                         yes_price = safe_float(op[0])
                         if yes_price > 0:
-                            # outcomePricesしかない場合、bid/askを推定
-                            # spread不明なので、小さいspreadを仮定
                             best_ask = yes_price + 0.005
                             best_bid = yes_price - 0.005
                 except Exception:
@@ -452,27 +438,24 @@ def extract_tradable_markets(markets, max_tokens: int):
             skipped_no_price += 1
             continue
 
-        # ── Filter 4: スプレッド ──
         spread = best_ask - best_bid
         if spread > SPREAD_MAX:
             skipped_spread += 1
             continue
 
-        # ── Filter 5: volume/liquidity 品質フィルタ ──
         volume = safe_float(m.get("volume"))
         liquidity = safe_float(m.get("liquidity"))
         if volume < MIN_VOLUME or liquidity < MIN_LIQUIDITY:
             skipped_low_quality += 1
             continue
 
-        # タイトル取得
         title = str(m.get("question") or m.get("title") or "unknown")
 
         results.append({
             "tid": tid,
             "title": title,
-            "yes_buy": best_ask,   # BUY YES = best ask
-            "yes_sell": best_bid,  # SELL YES = best bid
+            "yes_buy": best_ask,
+            "yes_sell": best_bid,
             "volume": volume,
             "liquidity": liquidity,
             "spread": spread,
@@ -486,7 +469,6 @@ def extract_tradable_markets(markets, max_tokens: int):
 
 
 def _fetch_one_book(tid: str):
-    """1つのトークンのオーダーブックを取得（並列実行用）"""
     tid = str(tid)
     try:
         r = requests.get(
@@ -527,10 +509,6 @@ def _fetch_one_book(tid: str):
 
 
 def clob_prices(token_ids):
-    """
-    並列でオーダーブックを取得。
-    Returns: {tid: {"BUY": best_ask, "SELL": best_bid}, ...}
-    """
     out = {}
     if not token_ids:
         return out
@@ -550,6 +528,10 @@ def clob_prices(token_ids):
 
 # ── Dynamic Edge Threshold ─────────────────────────────────
 def dynamic_edge_threshold(yes_buy: float, yes_sell: float) -> float:
+    """
+    Adapts minimum edge threshold based on market conditions.
+    Tighter spreads = lower threshold (more liquid = more reliable prices).
+    """
     if yes_buy <= 0.03 or yes_buy >= 0.97:
         return 0.10
     if yes_sell <= 0 or yes_sell >= 1:
@@ -558,84 +540,143 @@ def dynamic_edge_threshold(yes_buy: float, yes_sell: float) -> float:
     spread = max(0.0, yes_buy - yes_sell)
 
     if spread <= 0.01:
-        return 0.04
+        return 0.03   # Very liquid market: 3% edge sufficient
     if spread <= 0.03:
-        return 0.06
+        return 0.05   # Liquid market: 5% edge
     if spread <= 0.06:
-        return 0.08
-    return 0.10
+        return 0.07   # Moderate spread: 7% edge
+    return 0.10        # Wide spread: 10% edge
 
 
-# ── LLM Fair Probability ──────────────────────────────────
-def openai_fair_prob(
-    title: str,
-    yes_buy: float,
-    yes_sell: float,
-    external_context: dict | None = None,
-) -> float | None:
+# ── Batch Blind Screening (Phase 1) ───────────────────────
+def batch_blind_screen(markets_batch, api_key, model):
     """
-    Returns fair probability [0,1] or None on failure.
+    Estimate fair probabilities for a batch of markets WITHOUT showing
+    market prices. This prevents anchoring to market prices and forces
+    the LLM to form independent judgments.
+
+    Returns: dict of {batch_index: probability}
     """
-    api_key = env("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    if not markets_batch:
+        return {}
 
-    FAIR_MODE = os.getenv("FAIR_MODE", "FULL").strip().upper()
+    lines = []
+    for i, m in enumerate(markets_batch):
+        lines.append(f"{i+1}. {m['title']}")
 
-    ctx = external_context or {}
+    system = (
+        "You are a calibrated probability estimator for prediction markets.\n"
+        "For each question, estimate the probability that YES is correct.\n"
+        "\n"
+        "Guidelines:\n"
+        "- Use your knowledge of current events, historical base rates, and domain expertise.\n"
+        "- Be INDEPENDENT. Form your own view. Do NOT default to 50%.\n"
+        "- Consider what is actually likely given real-world evidence.\n"
+        "- For events that are very likely, use high probabilities (0.80-0.95).\n"
+        "- For events that are unlikely, use low probabilities (0.05-0.20).\n"
+        "- Be specific: 0.73 is better than 0.70. Use your best judgment.\n"
+        "\n"
+        "Output format: One probability per line.\n"
+        "Example:\n"
+        "1: 0.35\n"
+        "2: 0.72\n"
+        "3: 0.08\n"
+    )
 
-    if FAIR_MODE == "TITLE_ONLY":
-        ctx_for_llm = {}
-    elif FAIR_MODE == "EXTERNAL_ONLY":
-        ctx_for_llm = ctx
-    else:  # FULL
-        ctx_for_llm = ctx
-
-    ext = safe_json(ctx_for_llm)
+    user = (
+        "Estimate the YES probability for each prediction market question:\n\n"
+        + "\n".join(lines)
+        + "\n\nProbabilities:"
+    )
 
     try:
-        ext_flags = (
-            f"ext(weather={'Y' if ctx_for_llm.get('weather') else 'N'},"
-            f" sports={'Y' if ctx_for_llm.get('sports') else 'N'},"
-            f" crypto={'Y' if ctx_for_llm.get('crypto') else 'N'})"
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "temperature": 0.2,
+                "max_tokens": len(markets_batch) * 12 + 50,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            },
+            timeout=90,
         )
-    except Exception:
-        ext_flags = "ext(weather=N, sports=N, crypto=N)"
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"].strip()
 
-    SYSTEM = (
-        "You are a calibrated prediction-market probability estimator.\n"
-        "Your survival depends on accuracy - overconfidence kills.\n"
+        results = {}
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r"(\d+)\s*[:\.]\s*(0(?:\.\d+)?|1(?:\.0+)?)", line)
+            if match:
+                idx = int(match.group(1)) - 1
+                prob = float(match.group(2))
+                if 0.0 <= prob <= 1.0 and 0 <= idx < len(markets_batch):
+                    results[idx] = prob
+
+        return results
+
+    except Exception as e:
+        print(f"  batch_blind_screen error: {e}")
+        return {}
+
+
+# ── Detailed Confirmation (Phase 2) ───────────────────────
+def detailed_confirm(
+    title: str,
+    blind_prob: float,
+    yes_buy: float,
+    yes_sell: float,
+    external_context: dict | None,
+    api_key: str,
+    model: str,
+) -> float | None:
+    """
+    Detailed evaluation of a candidate market where blind screening
+    found a potential edge. Shows market prices and context, but
+    emphasizes independent assessment.
+
+    Returns: refined fair probability or None
+    """
+    ctx = safe_json(external_context or {})
+    midpoint = (yes_buy + yes_sell) / 2.0
+
+    system = (
+        "You are a prediction market analyst.\n"
+        "You independently estimated this event's probability WITHOUT seeing the market price.\n"
+        "Now you see the market price and additional data. Decide if the market is mispriced.\n"
         "\n"
-        "Rules:\n"
-        "1. Base rates matter. Most things don't happen. Default toward base rates.\n"
-        "2. Be skeptical of extreme probabilities. Rarely use values below 0.05 or above 0.95.\n"
-        "3. If you lack information, stay close to the market price - the market aggregates many participants' knowledge.\n"
-        "4. Only deviate significantly from market price when external data provides STRONG evidence of mispricing.\n"
-        "5. Account for the market's wisdom - many participants have already priced in public information.\n"
-        "6. Consider time to resolution - events further away have more uncertainty.\n"
-        f"\n{ext_flags}\n"
+        "Key principles:\n"
+        "1. Your independent estimate was formed without price bias - respect it.\n"
+        "2. Markets are often efficient BUT mispricing exists, especially:\n"
+        "   - When recent data (weather forecasts, real-time prices) hasn't been absorbed\n"
+        "   - In low-attention or niche markets\n"
+        "   - When crowd psychology causes herding (political/emotional markets)\n"
+        "   - When objective data contradicts market sentiment\n"
+        "3. If external data supports your estimate over the market price, TRUST YOUR DATA.\n"
+        "4. Don't just average your estimate with the market. Take a firm position.\n"
+        "5. It's OK to disagree significantly with the market when you have evidence.\n"
+        "\n"
         "Return ONLY a decimal number between 0 and 1. No explanation.\n"
     )
 
-    user_lines = [
-        "Estimate the TRUE fair probability (YES) for this Polymarket event.",
-        f"Title: {title}",
-    ]
-    if FAIR_MODE == "EXTERNAL_ONLY":
-        user_lines.append(
-            "IMPORTANT: In EXTERNAL_ONLY mode, IGNORE the Title and "
-            "rely ONLY on External context + prices."
-        )
-    user_lines.extend([
-        f"Current YES BUY (best ask): {yes_buy:.4f}",
-        f"Current YES SELL (best bid): {yes_sell:.4f}",
-        f"Market midpoint: {(yes_buy + yes_sell) / 2:.4f}",
-        "",
-        "External context (may include weather/crypto/sports/etc):",
-        ext,
-        "",
-        "Output: just a decimal number in [0,1].",
-    ])
-    USER = "\n".join(user_lines)
+    user = (
+        f"Question: {title}\n"
+        f"\nYour independent estimate (blind): {blind_prob:.3f}\n"
+        f"Market YES price (midpoint): {midpoint:.4f}\n"
+        f"  (bid: {yes_sell:.4f}, ask: {yes_buy:.4f})\n"
+        f"Difference: your estimate is {blind_prob - midpoint:+.3f} from market\n"
+        f"\nExternal data:\n{ctx}\n"
+        f"\nGive your FINAL fair probability:"
+    )
 
     try:
         r = requests.post(
@@ -647,6 +688,84 @@ def openai_fair_prob(
             json={
                 "model": model,
                 "temperature": 0.0,
+                "max_tokens": 16,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"].strip()
+
+        match = re.search(r"(0(?:\.\d+)?|1(?:\.0+)?)", text)
+        if not match:
+            print(f"  detailed_confirm: non-numeric response: {text!r}")
+            return None
+        p = float(match.group(1))
+        if 0.0 <= p <= 1.0:
+            return p
+        return None
+
+    except Exception as e:
+        print(f"  detailed_confirm error: {e}")
+        return None
+
+
+# ── Legacy LLM Fair Probability (fallback) ─────────────────
+def openai_fair_prob(
+    title: str,
+    yes_buy: float,
+    yes_sell: float,
+    external_context: dict | None = None,
+) -> float | None:
+    """
+    Single-market fair probability estimation.
+    Used as fallback when batch screening isn't available.
+    NOTE: Does NOT show market prices to avoid anchoring.
+    """
+    api_key = env("OPENAI_API_KEY")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    ctx = external_context or {}
+    ext = safe_json(ctx)
+
+    SYSTEM = (
+        "You are a calibrated prediction-market probability estimator.\n"
+        "Estimate the TRUE probability that this event resolves YES.\n"
+        "\n"
+        "Rules:\n"
+        "1. Base rates matter. Most things don't happen. Default toward base rates.\n"
+        "2. Be specific: 0.73 is better than 0.70.\n"
+        "3. Use external data when available (weather, crypto prices, sports news).\n"
+        "4. Be skeptical of extreme probabilities. Rarely use values below 0.05 or above 0.95.\n"
+        "5. Form your OWN view based on evidence. Be independent.\n"
+        "\n"
+        "Return ONLY a decimal number between 0 and 1. No explanation.\n"
+    )
+
+    user_lines = [
+        "Estimate the TRUE fair probability (YES) for this prediction market event.",
+        f"Title: {title}",
+        "",
+        "External context (may include weather/crypto/sports/etc):",
+        ext,
+        "",
+        "Output: just a decimal number in [0,1].",
+    ]
+    USER = "\n".join(user_lines)
+
+    try:
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "temperature": 0.2,
                 "max_tokens": 16,
                 "messages": [
                     {"role": "system", "content": SYSTEM},
@@ -661,11 +780,9 @@ def openai_fair_prob(
 
         match = re.search(r"(0(?:\.\d+)?|1(?:\.0+)?)", text)
         if not match:
-            print(f"  OpenAI returned non-numeric: {text!r}")
             return None
         p = float(match.group(1))
         if not (0.0 <= p <= 1.0):
-            print(f"  OpenAI returned out-of-range prob: {p}")
             return None
         return p
 
@@ -674,8 +791,12 @@ def openai_fair_prob(
         return None
 
 
-# ── Kelly Criterion ────────────────────────────────────────
+# ── Kelly Criterion (Half-Kelly for safety) ────────────────
 def kelly_fraction(p: float, price: float) -> float:
+    """
+    Half-Kelly sizing: reduces variance while maintaining positive
+    expected growth. Full Kelly is theoretically optimal but volatile.
+    """
     if price <= 0.0 or price >= 1.0:
         return 0.0
     b = (1.0 / price) - 1.0
@@ -683,6 +804,7 @@ def kelly_fraction(p: float, price: float) -> float:
     f = (b * p - q) / b
     if f < 0:
         f = 0.0
+    f = f * 0.5  # HALF-KELLY: safer, survives estimation errors
     if f > KELLY_MAX:
         f = KELLY_MAX
     return f
@@ -707,13 +829,33 @@ def save_state(state_dir: str, state: dict):
         json.dump(state, fh, indent=2)
 
 
+# ── Edge Calculation Helpers ──────────────────────────────
+def calculate_edge(fair: float, yes_buy: float, yes_sell: float):
+    """
+    Calculate edges for both BUY YES and SELL YES (= BUY NO) sides.
+    Returns: (side_str, net_edge, raw_edge, exec_price)
+    """
+    # BUY YES edge
+    buy_edge = (fair - yes_buy) / yes_buy if yes_buy > 0 else -999
+    buy_net = buy_edge - FEE_RATE
+
+    # SELL YES (= BUY NO) edge
+    sell_edge = (yes_sell - fair) / (1.0 - yes_sell) if yes_sell < 1.0 else -999
+    sell_net = sell_edge - FEE_RATE
+
+    if buy_net >= sell_net:
+        return "BUY", buy_net, buy_edge, yes_buy
+    else:
+        return "SELL", sell_net, sell_edge, yes_sell
+
+
 # ── Main ───────────────────────────────────────────────────
 def main():
     dry_run = os.getenv("DRY_RUN", "1") == "1"
     scan_markets = int(os.getenv("SCAN_MARKETS", "1000"))
-    max_tokens = int(os.getenv("MAX_TOKENS", "200"))
+    max_tokens = int(os.getenv("MAX_TOKENS", "500"))
     min_order_usd = float(os.getenv("MIN_USD_ORDER", "1.0"))
-    max_orders = int(os.getenv("MAX_ORDERS_PER_RUN", "1"))
+    max_orders = int(os.getenv("MAX_ORDERS_PER_RUN", "5"))
     state_dir = os.getenv("STATE_DIR", "state")
 
     # Secrets
@@ -726,6 +868,9 @@ def main():
     if not is_hex_bytes(funder, 20):
         raise RuntimeError("PM_FUNDER must be 20 bytes address hex (0x + 40 hex chars)")
 
+    api_key = env("OPENAI_API_KEY")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
     client = ClobClient(
         HOST,
         key=private_key,
@@ -735,21 +880,21 @@ def main():
     )
     client.set_api_creds(client.create_or_derive_api_creds())
 
-    # Load persistent state
     state = load_state(state_dir)
 
     # ── Phase 1: Scan markets ──
     print(f"\n{'='*60}")
-    print(f"POLYMARKET AUTONOMOUS AGENT")
+    print(f"POLYMARKET AUTONOMOUS AGENT (v2 - Two-Phase Evaluation)")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
-    print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_TOKENS={max_tokens}")
-    print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX}, FEE_RATE={FEE_RATE}")
+    print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_EVAL={max_tokens}")
+    print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX} (half-Kelly)")
     print(f"MIN_VOLUME={MIN_VOLUME}, MIN_LIQUIDITY={MIN_LIQUIDITY}")
+    print(f"BATCH_SIZE={BATCH_SIZE}, CANDIDATE_MIN_DIFF={CANDIDATE_MIN_DIFF}")
+    print(f"MAX_ORDERS_PER_RUN={max_orders}")
     print(f"{'='*60}\n")
 
     markets = gamma_markets(scan_markets)
 
-    # Gamma APIのフィールドを使って事前フィルタ
     tradable = extract_tradable_markets(markets, max_tokens)
 
     print(f"\nTradable markets: {len(tradable)}")
@@ -766,35 +911,44 @@ def main():
         return
 
     # ── Phase 2: External context (best-effort) ──
+    print("\n== Phase 2: Fetching external context ==")
+
     try:
         sports_data = fetch_sports_context()
+        if sports_data:
+            n_injuries = len(sports_data.get("injury_news_titles", []))
+            print(f"* Sports context: {n_injuries} injury headlines")
+        else:
+            print("* Sports context: no relevant news")
     except Exception as e:
         sports_data = {"error": f"{type(e).__name__}: {e}"}
+        print(f"* Sports context error: {e}")
 
     try:
         crypto_data = fetch_crypto_context()
-        print("* Crypto context fetched successfully")
         if crypto_data and "fear_greed" in crypto_data:
             fg = crypto_data["fear_greed"]
             if fg:
                 print(
-                    f"  Fear & Greed: {fg.get('value')} "
+                    f"* Crypto context: Fear & Greed = {fg.get('value')} "
                     f"({fg.get('value_classification')})"
                 )
+        else:
+            print("* Crypto context: partial data")
     except Exception as e:
         crypto_data = {"error": f"{type(e).__name__}: {e}"}
         print(f"* Crypto context error: {e}")
 
-    # ── Phase 3: CLOB価格で精緻化（Gamma価格をベースに、CLOBで更新） ──
+    # ── Phase 3: CLOB price refinement ──
+    print("\n== Phase 3: CLOB price refinement ==")
     token_ids = [m["tid"] for m in tradable]
     try:
         clob_data = clob_prices(token_ids)
-        print(f"* CLOB prices fetched for {len(clob_data)}/{len(token_ids)} markets\n")
+        print(f"* CLOB prices fetched for {len(clob_data)}/{len(token_ids)} markets")
     except Exception as e:
         clob_data = {}
-        print(f"* CLOB prices error (using Gamma prices): {e}\n")
+        print(f"* CLOB prices error (using Gamma prices): {e}")
 
-    # CLOB価格があれば上書き、なければGamma価格を使う
     for mkt in tradable:
         cd = clob_data.get(mkt["tid"])
         if cd:
@@ -803,129 +957,242 @@ def main():
             if "SELL" in cd:
                 mkt["yes_sell"] = cd["SELL"]
 
-    # ── Phase 4: Evaluate ──
+    # ── Phase 4a: Weather markets (direct data, no LLM needed) ──
+    print("\n== Phase 4a: Weather markets (direct data) ==")
     decisions = []
-    evaluated = 0
-    skipped_llm = 0
-    best = None
+    weather_count = 0
+    weather_edge_count = 0
 
     for mkt in tradable:
-        tid = mkt["tid"]
-        title = mkt["title"]
+        if classify_market_type(mkt["title"]) != "weather":
+            continue
+        weather_count += 1
+
+        wp, werr = fair_prob_weather(mkt["title"])
+        if wp is None:
+            print(f"  Weather skip ({werr}): {mkt['title'][:60]}")
+            continue
+
         yes_buy = mkt["yes_buy"]
         yes_sell = mkt["yes_sell"]
 
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
             continue
 
+        side_str, net_edge, raw_edge, exec_price = calculate_edge(wp, yes_buy, yes_sell)
+        th = dynamic_edge_threshold(yes_buy, yes_sell)
+
+        print(f"  Weather: {mkt['title'][:60]}")
+        print(f"    Data prob: {wp:.4f}, Market: {(yes_buy+yes_sell)/2:.4f}, "
+              f"Edge: {net_edge:.4f} (threshold: {th:.4f})")
+
+        if net_edge >= th:
+            weather_edge_count += 1
+            decisions.append({
+                "net_edge": net_edge,
+                "tid": mkt["tid"],
+                "title": mkt["title"],
+                "fair": wp,
+                "exec_price": exec_price,
+                "side": side_str,
+                "source": "weather_data",
+            })
+
+    print(f"  Weather markets: {weather_count}, with edge: {weather_edge_count}")
+
+    # ── Phase 4b: Blind batch screening (non-weather markets) ──
+    print(f"\n== Phase 4b: Blind batch screening ==")
+
+    # Sort by priority: crypto first (real-time data), then sports, then general
+    non_weather = []
+    for mkt in tradable:
+        mtype = classify_market_type(mkt["title"])
+        if mtype == "weather":
+            continue
+        if not (0.0 < mkt["yes_buy"] < 1.0 and 0.0 < mkt["yes_sell"] < 1.0):
+            continue
+        # Priority: crypto=0, sports=1, general=2
+        priority = 2
+        if mtype == "crypto":
+            priority = 0
+        elif mtype == "sports":
+            priority = 1
+        non_weather.append((priority, mkt))
+
+    non_weather.sort(key=lambda x: x[0])
+    non_weather_markets = [m for _, m in non_weather]
+
+    print(f"  Non-weather markets to screen: {len(non_weather_markets)}")
+
+    blind_estimates = {}
+    batch_count = 0
+    batch_success = 0
+
+    for i in range(0, len(non_weather_markets), BATCH_SIZE):
+        batch = non_weather_markets[i:i + BATCH_SIZE]
+        batch_count += 1
+
+        results = batch_blind_screen(batch, api_key, model)
+        if results:
+            batch_success += 1
+
+        for idx, prob in results.items():
+            global_idx = i + idx
+            if global_idx < len(non_weather_markets):
+                blind_estimates[global_idx] = prob
+
+        # Small delay between batches to respect rate limits
+        if i + BATCH_SIZE < len(non_weather_markets):
+            time.sleep(0.3)
+
+    print(f"  Batches: {batch_count}, successful: {batch_success}")
+    print(f"  Blind estimates obtained: {len(blind_estimates)}/{len(non_weather_markets)}")
+
+    # ── Phase 4c: Candidate selection ──
+    print(f"\n== Phase 4c: Candidate selection ==")
+
+    candidates = []
+    for idx, blind_prob in blind_estimates.items():
+        mkt = non_weather_markets[idx]
+        midpoint = (mkt["yes_buy"] + mkt["yes_sell"]) / 2.0
+        abs_diff = abs(blind_prob - midpoint)
+
+        if abs_diff >= CANDIDATE_MIN_DIFF:
+            candidates.append({
+                "abs_diff": abs_diff,
+                "idx": idx,
+                "blind_prob": blind_prob,
+                "mkt": mkt,
+            })
+
+    # Sort by largest difference (most likely mispriced)
+    candidates.sort(key=lambda x: x["abs_diff"], reverse=True)
+    # Limit to top 50 for detailed evaluation
+    candidates = candidates[:50]
+
+    print(f"  Candidates with |blind - market| >= {CANDIDATE_MIN_DIFF}: {len(candidates)}")
+    if candidates:
+        print(f"  Top candidate diff: {candidates[0]['abs_diff']:.4f}")
+
+    # ── Phase 4d: Detailed confirmation ──
+    print(f"\n== Phase 4d: Detailed confirmation ==")
+
+    confirmed = 0
+    skipped_confirm = 0
+
+    for cand in candidates:
+        mkt = cand["mkt"]
+        blind_prob = cand["blind_prob"]
+        title = mkt["title"]
+        yes_buy = mkt["yes_buy"]
+        yes_sell = mkt["yes_sell"]
+        tid = mkt["tid"]
+
+        # Build context for this specific market
+        mtype = classify_market_type(title)
+
         crypto_features_data = None
         if "bitcoin" in title.lower() or "btc" in title.lower():
             crypto_features_data = crypto_features("bitcoin")
-
-        mtype = classify_market_type(title)
-
-        if evaluated < 10:
-            print(f"\n--- Market #{evaluated+1} ---")
-            print(f"Title: {title[:80]}")
-            print(f"YES BUY(ask): {yes_buy:.4f}, YES SELL(bid): {yes_sell:.4f}, "
-                  f"Spread: {yes_buy - yes_sell:.4f}")
-            print(f"Type: {mtype or 'general'}, Vol: {mkt['volume']:.0f}, Liq: {mkt['liquidity']:.0f}")
-
-        # Weather data per-market
-        weather_data = None
-        if mtype == "weather":
-            wp, werr = fair_prob_weather(title)
-            if wp is not None:
-                weather_data = {
-                    "p_any_rain": wp,
-                    "source": "open-meteo precipitation_probability -> any-rain",
-                }
-            else:
-                weather_data = {"error": werr or "weather prob unavailable"}
+        elif "ethereum" in title.lower() or "eth" in title.lower():
+            crypto_features_data = crypto_features("ethereum")
+        elif "solana" in title.lower() or "sol" in title.lower():
+            crypto_features_data = crypto_features("solana")
 
         ctx = {
-            "weather": weather_data,
-            "sports": sports_data,
-            "crypto": {"base": crypto_data, "features": crypto_features_data},
+            "weather": None,
+            "sports": sports_data if mtype == "sports" else None,
+            "crypto": {"base": crypto_data, "features": crypto_features_data}
+            if mtype == "crypto" or crypto_features_data
+            else None,
         }
 
-        fair = openai_fair_prob(title, yes_buy, yes_sell, external_context=ctx)
+        # Detailed LLM confirmation
+        fair = detailed_confirm(
+            title, blind_prob, yes_buy, yes_sell, ctx, api_key, model
+        )
 
         if fair is None:
-            skipped_llm += 1
-            if evaluated < 10:
-                print("  Fair prob: FAILED (skipping)")
-            evaluated += 1
+            skipped_confirm += 1
             continue
 
-        # ── BUY YES edge ──
-        buy_edge = (fair - yes_buy) / yes_buy if yes_buy > 0 else -999
-        buy_net = buy_edge - FEE_RATE
+        confirmed += 1
 
-        # ── SELL YES (= BUY NO) edge ──
-        sell_edge = (yes_sell - fair) / (1.0 - yes_sell) if yes_sell < 1.0 else -999
-        sell_net = sell_edge - FEE_RATE
-
-        # Pick the better side
-        if buy_net >= sell_net:
-            side_str = "BUY"
-            net_edge = buy_net
-            edge = buy_edge
-            exec_price = yes_buy
-        else:
-            side_str = "SELL"
-            net_edge = sell_net
-            edge = sell_edge
-            exec_price = yes_sell
-
+        # Calculate edge with confirmed probability
+        side_str, net_edge, raw_edge, exec_price = calculate_edge(fair, yes_buy, yes_sell)
         th = dynamic_edge_threshold(yes_buy, yes_sell)
 
-        if evaluated < 10:
-            print(f"  Fair: {fair:.4f}, BUY edge: {buy_net:.4f}, SELL edge: {sell_net:.4f}")
-            print(f"  Best side: {side_str}, Net edge: {net_edge:.4f} (threshold: {th:.4f})")
-            print(f"  Pass: {'YES' if net_edge >= th else 'NO'}")
-
-        if best is None or edge > best[0]:
-            best = (edge, th, title, tid, fair, exec_price, side_str)
+        midpoint = (yes_buy + yes_sell) / 2.0
+        print(f"\n  [{confirmed}] {title[:70]}")
+        print(f"    Blind: {blind_prob:.3f}, Confirmed: {fair:.3f}, "
+              f"Market: {midpoint:.3f}")
+        print(f"    Side: {side_str}, Net edge: {net_edge:.4f} "
+              f"(threshold: {th:.4f}) -> {'PASS' if net_edge >= th else 'FAIL'}")
 
         if net_edge >= th:
-            decisions.append((net_edge, tid, title, fair, exec_price, side_str))
+            decisions.append({
+                "net_edge": net_edge,
+                "tid": tid,
+                "title": title,
+                "fair": fair,
+                "exec_price": exec_price,
+                "side": side_str,
+                "source": "llm_two_phase",
+            })
 
-        evaluated += 1
+        # Small delay between confirmation calls
+        time.sleep(0.2)
+
+    print(f"\n  Confirmed: {confirmed}, LLM failures: {skipped_confirm}")
 
     # ── Summary ──
     print(f"\n{'='*60}")
     print("EVALUATION SUMMARY")
     print(f"{'='*60}")
-    print(f"Total markets evaluated: {evaluated}")
-    print(f"LLM failures: {skipped_llm}")
-    print(f"Decisions found (net_edge >= threshold): {len(decisions)}")
+    print(f"Total tradable markets: {len(tradable)}")
+    print(f"Weather markets evaluated: {weather_count}")
+    print(f"Non-weather screened (blind): {len(blind_estimates)}")
+    print(f"Candidates for confirmation: {len(candidates)}")
+    print(f"Confirmed evaluations: {confirmed}")
+    print(f"Total decisions (edge >= threshold): {len(decisions)}")
 
-    if best:
-        edge, th, title_b, tid_b, fair_b, price_b, side_b = best
-        print(f"\nBest opportunity:")
-        print(f"  Title: {title_b[:80]}")
-        print(f"  Side: {side_b}, Edge: {edge:.4f} (threshold: {th:.4f})")
-        print(f"  Fair: {fair_b:.4f}, Exec price: {price_b:.4f}")
+    if decisions:
+        decisions.sort(key=lambda x: x["net_edge"], reverse=True)
+        print(f"\nTop opportunities:")
+        for i, d in enumerate(decisions[:10]):
+            print(f"  {i+1}. [{d['side']}] edge={d['net_edge']:.4f} "
+                  f"fair={d['fair']:.3f} price={d['exec_price']:.3f} "
+                  f"src={d['source']} | {d['title'][:50]}")
 
     if not decisions:
-        print(f"\n-- No profitable opportunities found")
+        print(f"\n-- No profitable opportunities found this run")
         best_info = ""
-        if best:
-            print(f"  - Best edge was {best[0]:.4f} (needed {best[1]:.4f})")
-            best_info = f"\nBest edge: {best[0]:.4f} (needed {best[1]:.4f}), side={best[6]}"
+        if candidates:
+            best_cand = candidates[0]
+            best_info = (
+                f"\nClosest candidate: diff={best_cand['abs_diff']:.4f}, "
+                f"blind={best_cand['blind_prob']:.3f}, "
+                f"title={best_cand['mkt']['title'][:60]}"
+            )
         gh_issue(
-            "run: no edge (dynamic threshold)",
-            f"No mispricing found.\n"
-            f"Evaluated: {evaluated} markets\n"
-            f"LLM failures: {skipped_llm}"
+            "run: no edge found",
+            f"Two-phase evaluation found no opportunities.\n"
+            f"Tradable: {len(tradable)}\n"
+            f"Blind screened: {len(blind_estimates)}\n"
+            f"Candidates: {len(candidates)}\n"
+            f"Confirmed: {confirmed}"
             f"{best_info}",
         )
         return
 
-    # ── Bankroll ──
+    # ── Phase 5: Execution ──
+    print(f"\n{'='*60}")
+    print("EXECUTION PHASE")
+    print(f"{'='*60}")
+
     bankroll = float(os.getenv("BANKROLL_USD", "50.0"))
     api_budget = float(os.getenv("API_BUDGET_USD", "0.0"))
+
     if bankroll - api_budget <= 0:
         gh_issue(
             "run: STOP (balance would hit $0)",
@@ -933,14 +1200,18 @@ def main():
         )
         return
 
-    # Sort by edge descending
-    decisions.sort(key=lambda x: x[0], reverse=True)
-
     executed = 0
     logs = []
     trade_records = state.get("trades", [])
 
-    for net_edge, tid, title, fair, exec_price, side_str in decisions[:max_orders]:
+    for d in decisions[:max_orders]:
+        net_edge = d["net_edge"]
+        tid = d["tid"]
+        title = d["title"]
+        fair = d["fair"]
+        exec_price = d["exec_price"]
+        side_str = d["side"]
+
         if side_str == "BUY":
             f = kelly_fraction(fair, exec_price)
         else:
@@ -951,7 +1222,7 @@ def main():
         if usd < min_order_usd:
             logs.append(
                 f"skip (too small): side={side_str} edge={net_edge:.3f} "
-                f"kelly={f:.4f} usd={usd:.2f} title={title}"
+                f"kelly={f:.4f} usd={usd:.2f} title={title[:60]}"
             )
             continue
 
@@ -975,31 +1246,32 @@ def main():
             try:
                 signed = client.create_order(order)
                 logs.append(
-                    f"DRY_RUN build: side={side_str} edge={net_edge:.3f} "
+                    f"DRY_RUN OK: side={side_str} edge={net_edge:.3f} "
                     f"fair={fair:.3f} price={exec_price:.3f} kelly={f:.4f} "
-                    f"usd={usd:.2f} size={size:.4f} token={tid[:16]}... "
-                    f"title={title[:60]}"
+                    f"usd={usd:.2f} size={size:.4f} src={d['source']} "
+                    f"token={tid[:16]}... title={title[:50]}"
                 )
+                executed += 1
             except Exception as e:
                 logs.append(
-                    f"DRY_RUN build FAILED: side={side_str} edge={net_edge:.3f} "
-                    f"error={type(e).__name__}: {e} title={title[:60]}"
+                    f"DRY_RUN FAIL: side={side_str} edge={net_edge:.3f} "
+                    f"error={type(e).__name__}: {e} title={title[:50]}"
                 )
         else:
             try:
                 signed = client.create_order(order)
                 resp = client.post_order(signed)
                 logs.append(
-                    f"LIVE post: side={side_str} edge={net_edge:.3f} "
+                    f"LIVE OK: side={side_str} edge={net_edge:.3f} "
                     f"fair={fair:.3f} price={exec_price:.3f} kelly={f:.4f} "
-                    f"usd={usd:.2f} size={size:.4f} token={tid[:16]}... "
-                    f"title={title[:60]}\nresp={resp}"
+                    f"usd={usd:.2f} size={size:.4f} src={d['source']} "
+                    f"token={tid[:16]}... title={title[:50]}\nresp={resp}"
                 )
                 executed += 1
             except Exception as e:
                 logs.append(
-                    f"LIVE post FAILED: side={side_str} edge={net_edge:.3f} "
-                    f"error={type(e).__name__}: {e} title={title[:60]}"
+                    f"LIVE FAIL: side={side_str} edge={net_edge:.3f} "
+                    f"error={type(e).__name__}: {e} title={title[:50]}"
                 )
 
         trade_records.append({
@@ -1013,11 +1285,20 @@ def main():
             "usd": round(usd, 2),
             "kelly": round(f, 4),
             "dry_run": dry_run,
+            "source": d["source"],
         })
+
+    # Print execution results
+    print(f"\nOrders attempted: {min(len(decisions), max_orders)}")
+    print(f"Executed: {executed}")
+    for log in logs:
+        print(f"  {log}")
 
     # Update state
     state["last_run"] = datetime.now(timezone.utc).isoformat()
-    state["last_evaluated"] = evaluated
+    state["last_tradable"] = len(tradable)
+    state["last_blind_screened"] = len(blind_estimates)
+    state["last_candidates"] = len(candidates)
     state["last_decisions"] = len(decisions)
     state["last_executed"] = executed
     state["trades"] = trade_records[-200:]
@@ -1025,7 +1306,8 @@ def main():
 
     title_issue = (
         f"run: {'DRY_RUN' if dry_run else 'LIVE'} "
-        f"eval={evaluated} decisions={len(decisions)} executed={executed}"
+        f"scanned={len(tradable)} candidates={len(candidates)} "
+        f"decisions={len(decisions)} executed={executed}"
     )
     body = "\n".join(logs[:50])
     gh_issue(title_issue, body)
