@@ -35,7 +35,7 @@ jobs:
 
           DRY_RUN: "1"              # 1=dry run, 0=live trading
           SCAN_MARKETS: "1000"
-          MAX_TOKENS: "200"         # LLM evaluation count (200 is enough for 10min)
+          MAX_TOKENS: "200"         # LLM evaluation count
           MAX_ORDERS_PER_RUN: "1"
           BANKROLL_USD: "50"
           MIN_USD_ORDER: "1.0"
@@ -43,8 +43,9 @@ jobs:
           KELLY_MAX: "0.06"
           FEE_RATE: "0.00"
           SLIPPAGE_MAX: "0.01"
-          SPREAD_MAX: "0.05"        # 5% spread max (was 3%, too restrictive)
-          MAX_DAYS_TO_RESOLUTION: "14"  # short-term markets only
+          SPREAD_MAX: "0.15"        # 15 cents (was 5, too restrictive)
+          MIN_VOLUME: "1000"        # minimum trading volume
+          MIN_LIQUIDITY: "500"      # minimum liquidity
           CLOB_WORKERS: "10"        # parallel price fetching threads
           STATE_DIR: "state"
         run: python agent.py
