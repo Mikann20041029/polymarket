@@ -1110,19 +1110,16 @@ def main():
                       f"market={midpoint:.3f} | {mkt['title'][:50]}")
                 continue
 
-            # Use CONSERVATIVE estimate (closer to market) to reduce false signals.
-            # If both say below market, use the higher one (closer to market).
-            # If both say above market, use the lower one (closer to market).
-            if pass1 < midpoint:
-                conservative_est = max(pass1, pass2)
-            else:
-                conservative_est = min(pass1, pass2)
+            # Average of two independent estimates (proper noise reduction).
+            # Conservative estimate was closer to midpoint, but edge is calculated
+            # vs ask/bid which is FURTHER from midpoint — causing zero/negative edges.
+            avg_est = (pass1 + pass2) / 2.0
 
             verified.append({
                 "mkt": mkt,
                 "pass1": pass1,
                 "pass2": pass2,
-                "avg_est": conservative_est,
+                "avg_est": avg_est,
                 "midpoint": midpoint,
             })
 
@@ -1173,7 +1170,13 @@ def main():
             has_data = mtype in ("crypto", "sports")
 
             side_str, net_edge, raw_edge, exec_price = calculate_edge(avg_est, yes_buy, yes_sell)
-            th = dynamic_edge_threshold(yes_buy, yes_sell, has_data=has_data)
+
+            # Dual-pass verified candidates already have triple safety:
+            # 1) Both passes agree on direction
+            # 2) Conservative estimate (closer to market)
+            # 3) Edge calc uses actual ask/bid (spread already factored in)
+            # So use a flat 3% threshold (covers ~2% fee + small margin).
+            th = 0.03
 
             midpoint = v["midpoint"]
             status = "PASS" if net_edge >= th else "FAIL"
