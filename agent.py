@@ -27,7 +27,33 @@ MIN_VOLUME = float(os.getenv("MIN_VOLUME", "1000"))
 MIN_LIQUIDITY = float(os.getenv("MIN_LIQUIDITY", "500"))
 CLOB_WORKERS = int(os.getenv("CLOB_WORKERS", "10"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
-CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.08"))
+CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.06"))
+
+# LLM Advantage: Political analysis, policy prediction, long-term events
+PREFER_TICKER_PATTERNS = [
+    "presidential-",         # 2028 presidential election
+    "democratic-",           # Democratic nomination
+    "republican-",           # Republican nomination
+    "prime-minister",        # International politics
+    "how-much-",             # Policy impact (DOGE cuts, tariffs)
+    "how-many-",             # Deportation estimates
+    "senate-",               # Senate races
+    "house-",                # House races
+    "-ceasefire",            # International relations
+    "-out-before",           # Leader removal (Putin, Xi)
+]
+
+# LLM Disadvantage: Sports, real-time events, unpredictable individual cases
+AVOID_TICKER_PATTERNS = [
+    "2026-nhl-",             # NHL championships
+    "2026-nba-",             # NBA championships
+    "2026-fifa-world-cup-winner",  # World Cup winner
+    "nba-rookie-",           # Rookie of the year
+    "-convicted",            # Criminal convictions
+    "-guilty",               # Criminal verdicts
+    "megaeth-",              # Crypto market cap
+    "-champion",             # Sports championships (generic)
+]
 
 
 # ── Utility ────────────────────────────────────────────────
@@ -375,6 +401,7 @@ def extract_tradable_markets(markets, max_tokens: int):
     skipped_no_price = 0
     skipped_spread = 0
     skipped_low_quality = 0
+    skipped_category = 0
 
     for m in markets:
         if len(results) >= max_tokens:
@@ -449,6 +476,12 @@ def extract_tradable_markets(markets, max_tokens: int):
             skipped_low_quality += 1
             continue
 
+        # Category filter: prefer LLM-advantage markets
+        should_trade, reason = should_trade_market(m)
+        if not should_trade:
+            skipped_category += 1
+            continue
+
         title = str(m.get("question") or m.get("title") or "unknown")
 
         results.append({
@@ -464,7 +497,8 @@ def extract_tradable_markets(markets, max_tokens: int):
     print(f"[Extract] Passed: {len(results)}")
     print(f"[Extract] Skipped: eob={skipped_eob}, no_clob={skipped_no_clob}, "
           f"parse={skipped_parse}, no_price={skipped_no_price}, "
-          f"spread={skipped_spread}, low_quality={skipped_low_quality}")
+          f"spread={skipped_spread}, low_quality={skipped_low_quality}, "
+          f"category={skipped_category}")
     return results
 
 
@@ -778,6 +812,34 @@ def calculate_edge(fair: float, yes_buy: float, yes_sell: float):
         return "SELL", sell_net, sell_edge, yes_sell
 
 
+def should_trade_market(market):
+    """
+    Returns (should_trade: bool, reason: str).
+    Filters based on ticker to prefer LLM-advantage markets.
+    """
+    # Extract ticker
+    events = market.get("events", [])
+    if not events:
+        return False, "no events"
+
+    ticker = events[0].get("ticker", "").lower()
+    if not ticker:
+        return True, "no ticker (neutral)"  # Allow if no ticker
+
+    # Check AVOID patterns first (higher priority)
+    for pattern in AVOID_TICKER_PATTERNS:
+        if pattern.lower() in ticker:
+            return False, f"avoid:{pattern}"
+
+    # Check PREFER patterns
+    for pattern in PREFER_TICKER_PATTERNS:
+        if pattern.lower() in ticker:
+            return True, f"prefer:{pattern}"
+
+    # Neutral: allow but log
+    return True, "neutral"
+
+
 # ── Main ───────────────────────────────────────────────────
 def main():
     dry_run = os.getenv("DRY_RUN", "1") == "1"
@@ -813,7 +875,7 @@ def main():
 
     # ── Phase 1: Scan markets ──
     print(f"\n{'='*60}")
-    print(f"POLYMARKET AUTONOMOUS AGENT (v4 - Batch-Direct + Dual-Pass)")
+    print(f"POLYMARKET AUTONOMOUS AGENT (v4.2 - Category Filtering)")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_EVAL={max_tokens}")
     print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX} (half-Kelly)")
