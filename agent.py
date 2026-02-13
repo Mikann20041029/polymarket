@@ -817,10 +817,10 @@ def should_trade_market(market):
     Returns (should_trade: bool, reason: str).
     Filters based on ticker to prefer LLM-advantage markets.
     """
-    # Extract ticker
+    # Extract ticker (defensive: allow if events missing)
     events = market.get("events", [])
     if not events:
-        return False, "no events"
+        return True, "no events (allow)"
 
     ticker = events[0].get("ticker", "").lower()
     if not ticker:
