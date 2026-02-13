@@ -46,6 +46,6 @@ jobs:
           MIN_LIQUIDITY: "500"      # minimum liquidity
           CLOB_WORKERS: "10"        # parallel price fetching threads
           BATCH_SIZE: "5"           # markets per blind screening batch (smaller = better quality)
-          CANDIDATE_MIN_DIFF: "0.08" # 8% min |blind_estimate - market| to be candidate (v4: higher threshold, batch-direct)
+          CANDIDATE_MIN_DIFF: "0.06" # 6% min |blind_estimate - market| to be candidate (v4.2: lowered for filtered political markets)
           STATE_DIR: "state"
         run: python agent.py
