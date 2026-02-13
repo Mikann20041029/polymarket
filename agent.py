@@ -1048,12 +1048,19 @@ def main():
                       f"market={midpoint:.3f} | {mkt['title'][:50]}")
                 continue
 
-            avg_est = (pass1 + pass2) / 2.0
+            # Use CONSERVATIVE estimate (closer to market) to reduce false signals.
+            # If both say below market, use the higher one (closer to market).
+            # If both say above market, use the lower one (closer to market).
+            if pass1 < midpoint:
+                conservative_est = max(pass1, pass2)
+            else:
+                conservative_est = min(pass1, pass2)
+
             verified.append({
                 "mkt": mkt,
                 "pass1": pass1,
                 "pass2": pass2,
-                "avg_est": avg_est,
+                "avg_est": conservative_est,
                 "midpoint": midpoint,
             })
 
