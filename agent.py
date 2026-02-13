@@ -1039,12 +1039,22 @@ def main():
     candidates = []
     for idx, blind_prob in blind_estimates.items():
         mkt = non_weather_markets[idx]
-        midpoint = (mkt["yes_buy"] + mkt["yes_sell"]) / 2.0
-        abs_diff = abs(blind_prob - midpoint)
+        yes_buy = mkt["yes_buy"]   # ask price
+        yes_sell = mkt["yes_sell"]  # bid price
 
-        if abs_diff >= CANDIDATE_MIN_DIFF:
+        if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
+            continue
+
+        # v4.2 FIX: Use actual edge vs ask/bid, NOT diff from midpoint.
+        # Previously compared to midpoint, but edge is calculated vs ask/bid.
+        # The spread gap (ask - midpoint) was eating all the edge.
+        side_str, net_edge, raw_edge, exec_price = calculate_edge(
+            blind_prob, yes_buy, yes_sell
+        )
+
+        if net_edge >= CANDIDATE_MIN_DIFF:
             candidates.append({
-                "abs_diff": abs_diff,
+                "abs_diff": net_edge,
                 "idx": idx,
                 "blind_prob": blind_prob,
                 "mkt": mkt,
@@ -1053,7 +1063,7 @@ def main():
     candidates.sort(key=lambda x: x["abs_diff"], reverse=True)
     candidates = candidates[:50]
 
-    print(f"  Candidates with |blind - market| >= {CANDIDATE_MIN_DIFF}: {len(candidates)}")
+    print(f"  Candidates with edge >= {CANDIDATE_MIN_DIFF}: {len(candidates)}")
     if candidates:
         top = candidates[0]
         print(f"  Top: diff={top['abs_diff']:.3f}, blind={top['blind_prob']:.3f}, "
@@ -1243,7 +1253,7 @@ def main():
         n_verified = len(verified) if candidates else 0
         gh_issue(
             "run: no edge found",
-            f"v4 Batch-direct pipeline found no opportunities.\n"
+            f"v4.2 pipeline found no opportunities.\n"
             f"Tradable: {len(tradable)}\n"
             f"Blind screened (pass 1): {len(blind_estimates)}\n"
             f"Candidates (|diff| >= {CANDIDATE_MIN_DIFF}): {len(candidates)}\n"
