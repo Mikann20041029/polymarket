@@ -27,7 +27,7 @@ MIN_VOLUME = float(os.getenv("MIN_VOLUME", "1000"))
 MIN_LIQUIDITY = float(os.getenv("MIN_LIQUIDITY", "500"))
 CLOB_WORKERS = int(os.getenv("CLOB_WORKERS", "10"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
-CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.03"))
+CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.08"))
 
 
 # ── Utility ────────────────────────────────────────────────
@@ -813,7 +813,7 @@ def main():
 
     # ── Phase 1: Scan markets ──
     print(f"\n{'='*60}")
-    print(f"POLYMARKET AUTONOMOUS AGENT (v3 - Full Blind Pipeline)")
+    print(f"POLYMARKET AUTONOMOUS AGENT (v4 - Batch-Direct + Dual-Pass)")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_EVAL={max_tokens}")
     print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX} (half-Kelly)")
@@ -998,74 +998,143 @@ def main():
               f"market={(top['mkt']['yes_buy']+top['mkt']['yes_sell'])/2:.3f}, "
               f"title={top['mkt']['title'][:50]}")
 
-    # ── Phase 4d: Individual blind evaluation (NO market prices) ──
-    # This is the KEY difference from v2: we do NOT show market prices
-    # to the LLM at any point. The LLM gives a fully independent estimate.
-    print(f"\n== Phase 4d: Individual blind evaluation (NO prices shown to LLM) ==")
+    # ── Phase 4d: Dual-pass batch verification ──
+    # v4 KEY CHANGE: Use batch estimates DIRECTLY instead of individual eval.
+    # Individual eval with step-by-step reasoning converges to market prices,
+    # erasing the edge. Batch "gut" estimates are more useful for finding mispricings.
+    # We run a SECOND independent batch pass on candidates for noise reduction.
+    print(f"\n== Phase 4d: Dual-pass batch verification (NO individual eval) ==")
 
-    eval_count = 0
-    eval_fail = 0
+    verified = []
+    diag_rows = []
 
-    for cand in candidates:
-        mkt = cand["mkt"]
-        title = mkt["title"]
-        yes_buy = mkt["yes_buy"]
-        yes_sell = mkt["yes_sell"]
-        tid = mkt["tid"]
-        mtype = classify_market_type(title)
+    if not candidates:
+        print("  No candidates to verify.")
+    else:
+        # Pass 2: Re-screen candidates in fresh batches
+        cand_markets = [c["mkt"] for c in candidates]
+        pass2_estimates = {}
+        pass2_batches = 0
 
-        # Build external context (data only, NO prices)
-        crypto_features_data = None
-        if "bitcoin" in title.lower() or "btc" in title.lower():
-            crypto_features_data = crypto_features("bitcoin")
-        elif "ethereum" in title.lower() or "eth" in title.lower():
-            crypto_features_data = crypto_features("ethereum")
-        elif "solana" in title.lower() or "sol" in title.lower():
-            crypto_features_data = crypto_features("solana")
+        for i in range(0, len(cand_markets), BATCH_SIZE):
+            batch = cand_markets[i:i + BATCH_SIZE]
+            pass2_batches += 1
+            results = batch_blind_screen(batch, api_key, model)
+            for idx, prob in results.items():
+                global_idx = i + idx
+                if global_idx < len(candidates):
+                    pass2_estimates[global_idx] = prob
+            if i + BATCH_SIZE < len(cand_markets):
+                time.sleep(0.3)
 
-        has_data = False
-        ctx = {}
-        if mtype == "sports" and sports_data:
-            ctx["sports_news"] = sports_data
-            has_data = True
-        if mtype == "crypto" or crypto_features_data:
-            ctx["crypto"] = {"base": crypto_data, "features": crypto_features_data}
-            has_data = True
+        print(f"  Pass 2 batches: {pass2_batches}, estimates: {len(pass2_estimates)}/{len(candidates)}")
 
-        # Individual evaluation - LLM NEVER sees market prices
-        fair = individual_blind_eval(title, ctx if ctx else None, api_key, model)
+        # Combine pass 1 and pass 2, filter for directional agreement
+        verified = []
+        for ci, cand in enumerate(candidates):
+            mkt = cand["mkt"]
+            pass1 = cand["blind_prob"]
+            pass2 = pass2_estimates.get(ci)
+            if pass2 is None:
+                continue
 
-        if fair is None:
-            eval_fail += 1
-            continue
+            midpoint = (mkt["yes_buy"] + mkt["yes_sell"]) / 2.0
 
-        eval_count += 1
+            # Both passes must agree on direction vs market
+            pass1_above = pass1 > midpoint
+            pass2_above = pass2 > midpoint
+            if pass1_above != pass2_above:
+                print(f"  SKIP (disagreement): pass1={pass1:.3f}, pass2={pass2:.3f}, "
+                      f"market={midpoint:.3f} | {mkt['title'][:50]}")
+                continue
 
-        # NOW compare blind estimate to market price (LLM never saw this)
-        side_str, net_edge, raw_edge, exec_price = calculate_edge(fair, yes_buy, yes_sell)
-        th = dynamic_edge_threshold(yes_buy, yes_sell, has_data=has_data)
-
-        midpoint = (yes_buy + yes_sell) / 2.0
-        print(f"\n  [{eval_count}] {title[:65]}")
-        print(f"    LLM estimate: {fair:.3f} (blind batch was: {cand['blind_prob']:.3f})")
-        print(f"    Market: {midpoint:.3f} (LLM never saw this)")
-        print(f"    Side: {side_str}, Edge: {net_edge:.4f} (threshold: {th:.4f}) "
-              f"-> {'PASS' if net_edge >= th else 'FAIL'}")
-
-        if net_edge >= th:
-            decisions.append({
-                "net_edge": net_edge,
-                "tid": tid,
-                "title": title,
-                "fair": fair,
-                "exec_price": exec_price,
-                "side": side_str,
-                "source": f"blind_eval_{'data' if has_data else 'llm'}",
+            avg_est = (pass1 + pass2) / 2.0
+            verified.append({
+                "mkt": mkt,
+                "pass1": pass1,
+                "pass2": pass2,
+                "avg_est": avg_est,
+                "midpoint": midpoint,
             })
 
-        time.sleep(0.2)
+        print(f"  Directionally agreed: {len(verified)}/{len(candidates)}")
 
-    print(f"\n  Evaluated: {eval_count}, LLM failures: {eval_fail}")
+        # ── Phase 4e: Post-CLOB spread recheck ──
+        print(f"\n== Phase 4e: Post-CLOB spread recheck ==")
+
+        if verified:
+            recheck_tids = [v["mkt"]["tid"] for v in verified]
+            try:
+                fresh_clob = clob_prices(recheck_tids)
+                print(f"  Fresh CLOB prices for {len(fresh_clob)}/{len(recheck_tids)} candidates")
+            except Exception as e:
+                fresh_clob = {}
+                print(f"  Fresh CLOB error (using earlier prices): {e}")
+
+            for v in verified:
+                mkt = v["mkt"]
+                fc = fresh_clob.get(mkt["tid"])
+                if fc:
+                    if "BUY" in fc:
+                        mkt["yes_buy"] = fc["BUY"]
+                    if "SELL" in fc:
+                        mkt["yes_sell"] = fc["SELL"]
+                    v["midpoint"] = (mkt["yes_buy"] + mkt["yes_sell"]) / 2.0
+
+        # Calculate edge and make decisions
+        diag_rows = []
+        for v in verified:
+            mkt = v["mkt"]
+            avg_est = v["avg_est"]
+            yes_buy = mkt["yes_buy"]
+            yes_sell = mkt["yes_sell"]
+            tid = mkt["tid"]
+            title = mkt["title"]
+
+            # Re-check spread after CLOB refresh
+            spread = yes_buy - yes_sell
+            if spread > SPREAD_MAX or spread < 0:
+                print(f"  SKIP (spread={spread:.3f}): {title[:50]}")
+                continue
+
+            if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
+                continue
+
+            mtype = classify_market_type(title)
+            has_data = mtype in ("crypto", "sports")
+
+            side_str, net_edge, raw_edge, exec_price = calculate_edge(avg_est, yes_buy, yes_sell)
+            th = dynamic_edge_threshold(yes_buy, yes_sell, has_data=has_data)
+
+            midpoint = v["midpoint"]
+            status = "PASS" if net_edge >= th else "FAIL"
+            print(f"\n  {title[:65]}")
+            print(f"    Pass1={v['pass1']:.3f}, Pass2={v['pass2']:.3f}, Avg={avg_est:.3f}")
+            print(f"    Market={midpoint:.3f}, Side={side_str}, Edge={net_edge:.4f} "
+                  f"(threshold={th:.4f}) -> {status}")
+
+            diag_rows.append({
+                "title": title[:60],
+                "pass1": round(v["pass1"], 3),
+                "pass2": round(v["pass2"], 3),
+                "avg": round(avg_est, 3),
+                "market": round(midpoint, 3),
+                "side": side_str,
+                "edge": round(net_edge, 4),
+                "threshold": round(th, 4),
+                "status": status,
+            })
+
+            if net_edge >= th:
+                decisions.append({
+                    "net_edge": net_edge,
+                    "tid": tid,
+                    "title": title,
+                    "fair": avg_est,
+                    "exec_price": exec_price,
+                    "side": side_str,
+                    "source": f"dual_pass_{'data' if has_data else 'llm'}",
+                })
 
     # ── Summary ──
     print(f"\n{'='*60}")
@@ -1073,9 +1142,9 @@ def main():
     print(f"{'='*60}")
     print(f"Total tradable: {len(tradable)}")
     print(f"Weather evaluated: {weather_count}")
-    print(f"Blind screened: {len(blind_estimates)}")
-    print(f"Candidates: {len(candidates)}")
-    print(f"Individually evaluated: {eval_count}")
+    print(f"Blind screened (pass 1): {len(blind_estimates)}")
+    print(f"Candidates (|diff| >= {CANDIDATE_MIN_DIFF}): {len(candidates)}")
+    print(f"Dual-pass verified: {len(verified) if candidates else 0}")
     print(f"Decisions (edge >= threshold): {len(decisions)}")
 
     if decisions:
@@ -1088,24 +1157,26 @@ def main():
 
     if not decisions:
         print(f"\n-- No profitable opportunities found this run")
-        best_info = ""
-        if candidates:
-            best_cand = candidates[0]
-            best_info = (
-                f"\nClosest candidate: diff={best_cand['abs_diff']:.4f}, "
-                f"blind={best_cand['blind_prob']:.3f}, "
-                f"market={(best_cand['mkt']['yes_buy']+best_cand['mkt']['yes_sell'])/2:.3f}, "
-                f"title={best_cand['mkt']['title'][:60]}"
-            )
+        diag_text = ""
+        if candidates and diag_rows:
+            diag_text = "\n\n## Top Candidates (Diagnostics)\n"
+            for i, row in enumerate(diag_rows[:10]):
+                diag_text += (
+                    f"\n{i+1}. **{row['title']}**\n"
+                    f"   Pass1={row['pass1']}, Pass2={row['pass2']}, "
+                    f"Avg={row['avg']}, Market={row['market']}\n"
+                    f"   Side={row['side']}, Edge={row['edge']}, "
+                    f"Threshold={row['threshold']}, Status={row['status']}\n"
+                )
+        n_verified = len(verified) if candidates else 0
         gh_issue(
             "run: no edge found",
-            f"v3 Full-blind pipeline found no opportunities.\n"
+            f"v4 Batch-direct pipeline found no opportunities.\n"
             f"Tradable: {len(tradable)}\n"
-            f"Blind screened: {len(blind_estimates)}\n"
-            f"Candidates: {len(candidates)}\n"
-            f"Individually evaluated: {eval_count}\n"
-            f"LLM failures: {eval_fail}"
-            f"{best_info}",
+            f"Blind screened (pass 1): {len(blind_estimates)}\n"
+            f"Candidates (|diff| >= {CANDIDATE_MIN_DIFF}): {len(candidates)}\n"
+            f"Dual-pass verified: {n_verified}"
+            f"{diag_text}",
         )
         return
 
@@ -1222,7 +1293,7 @@ def main():
     state["last_tradable"] = len(tradable)
     state["last_blind_screened"] = len(blind_estimates)
     state["last_candidates"] = len(candidates)
-    state["last_individually_evaluated"] = eval_count
+    state["last_dual_pass_verified"] = len(verified) if candidates else 0
     state["last_decisions"] = len(decisions)
     state["last_executed"] = executed
     state["trades"] = trade_records[-200:]
