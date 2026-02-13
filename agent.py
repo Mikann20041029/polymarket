@@ -27,7 +27,7 @@ MIN_VOLUME = float(os.getenv("MIN_VOLUME", "1000"))
 MIN_LIQUIDITY = float(os.getenv("MIN_LIQUIDITY", "500"))
 CLOB_WORKERS = int(os.getenv("CLOB_WORKERS", "10"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
-CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.06"))
+CANDIDATE_MIN_DIFF = float(os.getenv("CANDIDATE_MIN_DIFF", "0.02"))
 
 # LLM Advantage: Political analysis, policy prediction, long-term events
 PREFER_TICKER_PATTERNS = [
@@ -875,7 +875,7 @@ def main():
 
     # ── Phase 1: Scan markets ──
     print(f"\n{'='*60}")
-    print(f"POLYMARKET AUTONOMOUS AGENT (v4.2 - Category Filtering)")
+    print(f"POLYMARKET AUTONOMOUS AGENT (v4.3 - Threshold Fix)")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_EVAL={max_tokens}")
     print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX} (half-Kelly)")
@@ -1066,9 +1066,22 @@ def main():
     print(f"  Candidates with edge >= {CANDIDATE_MIN_DIFF}: {len(candidates)}")
     if candidates:
         top = candidates[0]
-        print(f"  Top: diff={top['abs_diff']:.3f}, blind={top['blind_prob']:.3f}, "
+        print(f"  Top: edge={top['abs_diff']:.3f}, blind={top['blind_prob']:.3f}, "
               f"market={(top['mkt']['yes_buy']+top['mkt']['yes_sell'])/2:.3f}, "
               f"title={top['mkt']['title'][:50]}")
+    else:
+        # Debug: show top 10 edges even if below threshold
+        all_edges = []
+        for idx, bp in blind_estimates.items():
+            m = non_weather_markets[idx]
+            yb, ys = m["yes_buy"], m["yes_sell"]
+            if 0.0 < yb < 1.0 and 0.0 < ys < 1.0:
+                _, ne, _, _ = calculate_edge(bp, yb, ys)
+                all_edges.append((ne, bp, (yb+ys)/2, m["title"][:40]))
+        all_edges.sort(key=lambda x: x[0], reverse=True)
+        print(f"  DEBUG: Top 10 edges (all below {CANDIDATE_MIN_DIFF}):")
+        for e, bp, mp, t in all_edges[:10]:
+            print(f"    edge={e:.4f}, blind={bp:.3f}, market={mp:.3f} | {t}")
 
     # ── Phase 4d: Dual-pass batch verification ──
     # v4 KEY CHANGE: Use batch estimates DIRECTLY instead of individual eval.
@@ -1253,10 +1266,10 @@ def main():
         n_verified = len(verified) if candidates else 0
         gh_issue(
             "run: no edge found",
-            f"v4.2 pipeline found no opportunities.\n"
+            f"v4.3 pipeline found no opportunities.\n"
             f"Tradable: {len(tradable)}\n"
             f"Blind screened (pass 1): {len(blind_estimates)}\n"
-            f"Candidates (|diff| >= {CANDIDATE_MIN_DIFF}): {len(candidates)}\n"
+            f"Candidates (edge >= {CANDIDATE_MIN_DIFF}): {len(candidates)}\n"
             f"Dual-pass verified: {n_verified}"
             f"{diag_text}",
         )
