@@ -1,12 +1,12 @@
-name: polymarket-agent
+name: polymarket-arb-scanner
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/1 * * * *"
 
 jobs:
-  run:
+  scan:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,34 +18,19 @@ jobs:
           python-version: "3.11"
       - name: Install
         run: pip install -r requirements.txt
-      - name: Run agent
+      - name: Run scanner
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
 
-          PM_PRIVATE_KEY: ${{ secrets.PM_PRIVATE_KEY }}
-          PM_FUNDER: ${{ secrets.PM_FUNDER }}
-          PM_SIGNATURE_TYPE: ${{ secrets.PM_SIGNATURE_TYPE }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-          # FULL = Title + External context (recommended)
-          FAIR_MODE: "FULL"
-
-          DRY_RUN: "1"              # 1=dry run, 0=live trading
-          SCAN_MARKETS: "1000"
-          MAX_TOKENS: "500"         # Max markets to evaluate (increased from 200)
-          MAX_ORDERS_PER_RUN: "5"   # Up to 5 trades per run (was 1)
-          BANKROLL_USD: "50"
-          MIN_USD_ORDER: "1.0"
-          EDGE_MIN: "0.05"          # 5% baseline (dynamic threshold adjusts per market)
-          KELLY_MAX: "0.06"         # 6% max Kelly fraction (applied as half-Kelly)
-          FEE_RATE: "0.00"
-          SLIPPAGE_MAX: "0.01"
-          SPREAD_MAX: "0.15"        # 15 cents max bid-ask spread
-          MIN_VOLUME: "1000"        # minimum trading volume
-          MIN_LIQUIDITY: "500"      # minimum liquidity
-          CLOB_WORKERS: "10"        # parallel price fetching threads
-          BATCH_SIZE: "5"           # markets per blind screening batch (smaller = better quality)
-          CANDIDATE_MIN_DIFF: "0.02" # 2% min edge vs ask/bid to be candidate (v4.3: aligned with edge-based selection)
-          STATE_DIR: "state"
+          DRY_RUN: "1"
+          SCAN_MARKETS: "2000"
+          FEE_BPS: "0"
+          SLIPPAGE_BPS: "50"
+          FILL_RISK_BPS: "16"
+          MIN_VOLUME: "1000"
+          MIN_LIQUIDITY: "500"
+          CLOB_WORKERS: "15"
+          ARB_QUANTITY: "100"
+          TOP_N: "10"
         run: python agent.py
