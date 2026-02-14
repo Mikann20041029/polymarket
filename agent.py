@@ -3,6 +3,7 @@ import json
 import time
 import math
 import re
+import collections
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
@@ -494,12 +495,22 @@ def extract_tradable_markets(markets, max_tokens: int):
             "spread": spread,
         })
 
+    skip_stats = {
+        "eob": skipped_eob,
+        "no_clob": skipped_no_clob,
+        "parse": skipped_parse,
+        "no_price": skipped_no_price,
+        "spread": skipped_spread,
+        "low_quality": skipped_low_quality,
+        "category": skipped_category,
+    }
+
     print(f"[Extract] Passed: {len(results)}")
     print(f"[Extract] Skipped: eob={skipped_eob}, no_clob={skipped_no_clob}, "
           f"parse={skipped_parse}, no_price={skipped_no_price}, "
           f"spread={skipped_spread}, low_quality={skipped_low_quality}, "
           f"category={skipped_category}")
-    return results
+    return results, skip_stats
 
 
 def _fetch_one_book(tid: str):
@@ -875,7 +886,7 @@ def main():
 
     # ── Phase 1: Scan markets ──
     print(f"\n{'='*60}")
-    print(f"POLYMARKET AUTONOMOUS AGENT (v4.3 - Threshold Fix)")
+    print(f"POLYMARKET AUTONOMOUS AGENT (v4.4 - Full Diagnostics)")
     print(f"Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"DRY_RUN={dry_run}, SCAN={scan_markets}, MAX_EVAL={max_tokens}")
     print(f"SPREAD_MAX={SPREAD_MAX}, KELLY_MAX={KELLY_MAX} (half-Kelly)")
@@ -885,20 +896,27 @@ def main():
     print(f"{'='*60}\n")
 
     markets = gamma_markets(scan_markets)
-    tradable = extract_tradable_markets(markets, max_tokens)
+    tradable, extract_skip_stats = extract_tradable_markets(markets, max_tokens)
 
     print(f"\nTradable markets: {len(tradable)}")
 
     if not tradable:
+        skip_detail = ", ".join(f"{k}={v}" for k, v in extract_skip_stats.items() if v > 0)
         msg = (
             f"No tradable markets found.\n"
             f"Gamma returned {len(markets)} markets but 0 passed filters.\n"
             f"Filters: enableOrderBook, clobTokenIds, price, spread<={SPREAD_MAX}, "
-            f"volume>={MIN_VOLUME}, liquidity>={MIN_LIQUIDITY}"
+            f"volume>={MIN_VOLUME}, liquidity>={MIN_LIQUIDITY}\n\n"
+            f"## Extract Skip Breakdown\n{skip_detail}"
         )
         print(msg)
         gh_issue("run: 0 tradable markets", msg)
         return
+
+    # ── Diagnostic tracking ──
+    # all_candidate_diagnostics: tracks every candidate through pipeline
+    all_candidate_diagnostics = []
+    reject_counter = collections.Counter()
 
     # ── Phase 2: External context (best-effort) ──
     print("\n== Phase 2: Fetching external context ==")
@@ -1033,7 +1051,7 @@ def main():
     print(f"  Batches: {batch_count}, successful: {batch_success}")
     print(f"  Blind estimates obtained: {len(blind_estimates)}/{len(non_weather_markets)}")
 
-    # ── Phase 4c: Candidate selection ──
+    # ── Phase 4c: Candidate selection (with full diagnostics) ──
     print(f"\n== Phase 4c: Candidate selection ==")
 
     candidates = []
@@ -1045,12 +1063,30 @@ def main():
         if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
             continue
 
-        # v4.2 FIX: Use actual edge vs ask/bid, NOT diff from midpoint.
-        # Previously compared to midpoint, but edge is calculated vs ask/bid.
-        # The spread gap (ask - midpoint) was eating all the edge.
         side_str, net_edge, raw_edge, exec_price = calculate_edge(
             blind_prob, yes_buy, yes_sell
         )
+        spread = yes_buy - yes_sell
+        midpoint = (yes_buy + yes_sell) / 2.0
+
+        # Build diagnostic record for EVERY screened market
+        diag = {
+            "title": mkt["title"][:80],
+            "token_id": mkt["tid"][:20],
+            "side": side_str,
+            "market_mid": round(midpoint, 4),
+            "ask": round(yes_buy, 4),
+            "bid": round(yes_sell, 4),
+            "spread": round(spread, 4),
+            "p_model_pass1": round(blind_prob, 4),
+            "p_model_pass2": None,
+            "p_model_avg": None,
+            "edge_before_cost": round(raw_edge, 4),
+            "edge_after_cost": round(net_edge, 4),
+            "size_chosen": None,
+            "reject_reason": None,
+            "phase_reached": "candidate_selection",
+        }
 
         if net_edge >= CANDIDATE_MIN_DIFF:
             candidates.append({
@@ -1058,7 +1094,13 @@ def main():
                 "idx": idx,
                 "blind_prob": blind_prob,
                 "mkt": mkt,
+                "diag": diag,
             })
+        else:
+            diag["reject_reason"] = "EV_TOO_SMALL"
+            diag["size_chosen"] = 0
+            reject_counter["EV_TOO_SMALL"] += 1
+            all_candidate_diagnostics.append(diag)
 
     candidates.sort(key=lambda x: x["abs_diff"], reverse=True)
     candidates = candidates[:50]
@@ -1084,14 +1126,9 @@ def main():
             print(f"    edge={e:.4f}, blind={bp:.3f}, market={mp:.3f} | {t}")
 
     # ── Phase 4d: Dual-pass batch verification ──
-    # v4 KEY CHANGE: Use batch estimates DIRECTLY instead of individual eval.
-    # Individual eval with step-by-step reasoning converges to market prices,
-    # erasing the edge. Batch "gut" estimates are more useful for finding mispricings.
-    # We run a SECOND independent batch pass on candidates for noise reduction.
     print(f"\n== Phase 4d: Dual-pass batch verification (NO individual eval) ==")
 
     verified = []
-    diag_rows = []
 
     if not candidates:
         print("  No candidates to verify.")
@@ -1118,10 +1155,19 @@ def main():
         verified = []
         for ci, cand in enumerate(candidates):
             mkt = cand["mkt"]
+            diag = cand["diag"]
             pass1 = cand["blind_prob"]
             pass2 = pass2_estimates.get(ci)
+
             if pass2 is None:
+                diag["reject_reason"] = "PASS2_FAILED"
+                diag["phase_reached"] = "dual_pass"
+                diag["size_chosen"] = 0
+                reject_counter["PASS2_FAILED"] += 1
+                all_candidate_diagnostics.append(diag)
                 continue
+
+            diag["p_model_pass2"] = round(pass2, 4)
 
             midpoint = (mkt["yes_buy"] + mkt["yes_sell"]) / 2.0
 
@@ -1131,12 +1177,16 @@ def main():
             if pass1_above != pass2_above:
                 print(f"  SKIP (disagreement): pass1={pass1:.3f}, pass2={pass2:.3f}, "
                       f"market={midpoint:.3f} | {mkt['title'][:50]}")
+                diag["reject_reason"] = "MODEL_DISAGREE"
+                diag["p_model_avg"] = round((pass1 + pass2) / 2.0, 4)
+                diag["phase_reached"] = "dual_pass"
+                diag["size_chosen"] = 0
+                reject_counter["MODEL_DISAGREE"] += 1
+                all_candidate_diagnostics.append(diag)
                 continue
 
-            # Average of two independent estimates (proper noise reduction).
-            # Conservative estimate was closer to midpoint, but edge is calculated
-            # vs ask/bid which is FURTHER from midpoint — causing zero/negative edges.
             avg_est = (pass1 + pass2) / 2.0
+            diag["p_model_avg"] = round(avg_est, 4)
 
             verified.append({
                 "mkt": mkt,
@@ -1144,6 +1194,7 @@ def main():
                 "pass2": pass2,
                 "avg_est": avg_est,
                 "midpoint": midpoint,
+                "diag": diag,
             })
 
         print(f"  Directionally agreed: {len(verified)}/{len(candidates)}")
@@ -1169,11 +1220,16 @@ def main():
                     if "SELL" in fc:
                         mkt["yes_sell"] = fc["SELL"]
                     v["midpoint"] = (mkt["yes_buy"] + mkt["yes_sell"]) / 2.0
+                    # Update diag with fresh prices
+                    v["diag"]["ask"] = round(mkt["yes_buy"], 4)
+                    v["diag"]["bid"] = round(mkt["yes_sell"], 4)
+                    v["diag"]["market_mid"] = round(v["midpoint"], 4)
+                    v["diag"]["spread"] = round(mkt["yes_buy"] - mkt["yes_sell"], 4)
 
         # Calculate edge and make decisions
-        diag_rows = []
         for v in verified:
             mkt = v["mkt"]
+            diag = v["diag"]
             avg_est = v["avg_est"]
             yes_buy = mkt["yes_buy"]
             yes_sell = mkt["yes_sell"]
@@ -1184,9 +1240,19 @@ def main():
             spread = yes_buy - yes_sell
             if spread > SPREAD_MAX or spread < 0:
                 print(f"  SKIP (spread={spread:.3f}): {title[:50]}")
+                diag["reject_reason"] = "SPREAD_TOO_WIDE"
+                diag["phase_reached"] = "post_clob"
+                diag["size_chosen"] = 0
+                reject_counter["SPREAD_TOO_WIDE"] += 1
+                all_candidate_diagnostics.append(diag)
                 continue
 
             if not (0.0 < yes_buy < 1.0 and 0.0 < yes_sell < 1.0):
+                diag["reject_reason"] = "INVALID_PRICE"
+                diag["phase_reached"] = "post_clob"
+                diag["size_chosen"] = 0
+                reject_counter["INVALID_PRICE"] += 1
+                all_candidate_diagnostics.append(diag)
                 continue
 
             mtype = classify_market_type(title)
@@ -1194,11 +1260,11 @@ def main():
 
             side_str, net_edge, raw_edge, exec_price = calculate_edge(avg_est, yes_buy, yes_sell)
 
-            # Dual-pass verified candidates already have triple safety:
-            # 1) Both passes agree on direction
-            # 2) Conservative estimate (closer to market)
-            # 3) Edge calc uses actual ask/bid (spread already factored in)
-            # So use a flat 3% threshold (covers ~2% fee + small margin).
+            # Update diagnostic with recalculated edge
+            diag["side"] = side_str
+            diag["edge_before_cost"] = round(raw_edge, 4)
+            diag["edge_after_cost"] = round(net_edge, 4)
+
             th = 0.03
 
             midpoint = v["midpoint"]
@@ -1208,19 +1274,19 @@ def main():
             print(f"    Market={midpoint:.3f}, Side={side_str}, Edge={net_edge:.4f} "
                   f"(threshold={th:.4f}) -> {status}")
 
-            diag_rows.append({
-                "title": title[:60],
-                "pass1": round(v["pass1"], 3),
-                "pass2": round(v["pass2"], 3),
-                "avg": round(avg_est, 3),
-                "market": round(midpoint, 3),
-                "side": side_str,
-                "edge": round(net_edge, 4),
-                "threshold": round(th, 4),
-                "status": status,
-            })
+            diag["phase_reached"] = "edge_check"
 
             if net_edge >= th:
+                # Calculate Kelly for size
+                if side_str == "BUY":
+                    kf = kelly_fraction(avg_est, exec_price)
+                else:
+                    kf = kelly_fraction(1.0 - avg_est, 1.0 - exec_price)
+                est_usd = float(os.getenv("BANKROLL_USD", "50.0")) * kf
+                diag["size_chosen"] = round(est_usd, 2)
+                diag["reject_reason"] = None  # PASS
+                diag["phase_reached"] = "ACCEPTED"
+
                 decisions.append({
                     "net_edge": net_edge,
                     "tid": tid,
@@ -1230,8 +1296,82 @@ def main():
                     "side": side_str,
                     "source": f"dual_pass_{'data' if has_data else 'llm'}",
                 })
+                all_candidate_diagnostics.append(diag)
+            else:
+                diag["reject_reason"] = "EV_TOO_SMALL"
+                diag["size_chosen"] = 0
+                reject_counter["EV_TOO_SMALL"] += 1
+                all_candidate_diagnostics.append(diag)
 
-    # ── Summary ──
+    # ── Build comprehensive diagnostic Issue body ──
+    # Sort diagnostics by edge_after_cost (highest first) for top-5
+    all_candidate_diagnostics.sort(
+        key=lambda d: d.get("edge_after_cost") or -999, reverse=True
+    )
+
+    # --- A. Top 5 candidate detail log ---
+    top5_text = "## Top 5 Candidate Details\n\n"
+    if all_candidate_diagnostics:
+        for i, d in enumerate(all_candidate_diagnostics[:5]):
+            rej = d.get("reject_reason") or "ACCEPTED"
+            top5_text += (
+                f"### {i+1}. {d['title']}\n"
+                f"- **token_id**: `{d['token_id']}...`\n"
+                f"- **side**: {d['side']}\n"
+                f"- **market_mid**: {d['market_mid']} | ask: {d['ask']} | bid: {d['bid']}\n"
+                f"- **spread**: {d['spread']}\n"
+                f"- **p_model**: pass1={d['p_model_pass1']}, "
+                f"pass2={d['p_model_pass2']}, avg={d['p_model_avg']}\n"
+                f"- **edge_before_cost**: {d['edge_before_cost']}\n"
+                f"- **edge_after_cost**: {d['edge_after_cost']}\n"
+                f"- **size_chosen**: {d['size_chosen']}"
+            )
+            if d["size_chosen"] == 0:
+                top5_text += f" (reason: {rej})"
+            top5_text += f"\n- **reject_reason**: {rej}\n"
+            top5_text += f"- **phase_reached**: {d['phase_reached']}\n\n"
+    else:
+        top5_text += "_No candidates reached diagnostics stage._\n\n"
+
+    # --- B. reject_counts 1-line summary ---
+    reject_line = "## Reject Counts\n"
+    if reject_counter:
+        reject_line += "```\nreject_counts: " + ", ".join(
+            f"{k}={v}" for k, v in reject_counter.most_common()
+        ) + "\n```\n\n"
+    else:
+        reject_line += "_No rejects (all candidates accepted or no candidates)._\n\n"
+
+    # --- C. Pipeline funnel summary ---
+    n_verified = len(verified) if candidates else 0
+    pipeline_text = (
+        "## Pipeline Summary\n"
+        f"- **Gamma API**: {len(markets)} markets fetched\n"
+        f"- **extract_tradable**: {len(tradable)} passed "
+        f"(skipped: {', '.join(f'{k}={v}' for k, v in extract_skip_stats.items() if v > 0)})\n"
+        f"- **Weather evaluated**: {weather_count}\n"
+        f"- **Blind screening (pass 1)**: {len(non_weather_markets)} → "
+        f"{len(blind_estimates)} estimates\n"
+        f"- **Candidate selection (edge >= {CANDIDATE_MIN_DIFF})**: "
+        f"{len(blind_estimates)} → {len(candidates)}\n"
+        f"- **Dual-pass verification**: {len(candidates)} → {n_verified} agreed\n"
+        f"- **Final decisions**: {len(decisions)}\n\n"
+    )
+
+    # --- Config snapshot ---
+    config_text = (
+        "## Config\n"
+        f"```\n"
+        f"SPREAD_MAX={SPREAD_MAX}, FEE_RATE={FEE_RATE}, "
+        f"SLIPPAGE_MAX={SLIPPAGE_MAX}\n"
+        f"EDGE_MIN={EDGE_MIN}, CANDIDATE_MIN_DIFF={CANDIDATE_MIN_DIFF}\n"
+        f"KELLY_MAX={KELLY_MAX}, MIN_VOLUME={MIN_VOLUME}, "
+        f"MIN_LIQUIDITY={MIN_LIQUIDITY}\n"
+        f"BATCH_SIZE={BATCH_SIZE}, MODEL={model}\n"
+        f"```\n\n"
+    )
+
+    # ── Summary (console) ──
     print(f"\n{'='*60}")
     print("EVALUATION SUMMARY")
     print(f"{'='*60}")
@@ -1239,8 +1379,10 @@ def main():
     print(f"Weather evaluated: {weather_count}")
     print(f"Blind screened (pass 1): {len(blind_estimates)}")
     print(f"Candidates (|diff| >= {CANDIDATE_MIN_DIFF}): {len(candidates)}")
-    print(f"Dual-pass verified: {len(verified) if candidates else 0}")
+    print(f"Dual-pass verified: {n_verified}")
     print(f"Decisions (edge >= threshold): {len(decisions)}")
+    if reject_counter:
+        print(f"reject_counts: {', '.join(f'{k}={v}' for k, v in reject_counter.most_common())}")
 
     if decisions:
         decisions.sort(key=lambda x: x["net_edge"], reverse=True)
@@ -1252,27 +1394,17 @@ def main():
 
     if not decisions:
         print(f"\n-- No profitable opportunities found this run")
-        diag_text = ""
-        if candidates and diag_rows:
-            diag_text = "\n\n## Top Candidates (Diagnostics)\n"
-            for i, row in enumerate(diag_rows[:10]):
-                diag_text += (
-                    f"\n{i+1}. **{row['title']}**\n"
-                    f"   Pass1={row['pass1']}, Pass2={row['pass2']}, "
-                    f"Avg={row['avg']}, Market={row['market']}\n"
-                    f"   Side={row['side']}, Edge={row['edge']}, "
-                    f"Threshold={row['threshold']}, Status={row['status']}\n"
-                )
-        n_verified = len(verified) if candidates else 0
-        gh_issue(
-            "run: no edge found",
-            f"v4.3 pipeline found no opportunities.\n"
-            f"Tradable: {len(tradable)}\n"
-            f"Blind screened (pass 1): {len(blind_estimates)}\n"
-            f"Candidates (edge >= {CANDIDATE_MIN_DIFF}): {len(candidates)}\n"
-            f"Dual-pass verified: {n_verified}"
-            f"{diag_text}",
+
+        # Build full diagnostic Issue body
+        issue_body = (
+            f"# v4.4 Pipeline: No Opportunities Found\n\n"
+            f"{pipeline_text}"
+            f"{reject_line}"
+            f"{top5_text}"
+            f"{config_text}"
         )
+
+        gh_issue("run: no edge found (full diagnostics)", issue_body)
         return
 
     # ── Phase 5: Execution ──
@@ -1310,6 +1442,7 @@ def main():
         usd = bankroll * f
 
         if usd < min_order_usd:
+            reject_counter["SIZE_TOO_SMALL"] += 1
             logs.append(
                 f"skip (too small): side={side_str} edge={net_edge:.3f} "
                 f"kelly={f:.4f} usd={usd:.2f} title={title[:60]}"
@@ -1388,19 +1521,30 @@ def main():
     state["last_tradable"] = len(tradable)
     state["last_blind_screened"] = len(blind_estimates)
     state["last_candidates"] = len(candidates)
-    state["last_dual_pass_verified"] = len(verified) if candidates else 0
+    state["last_dual_pass_verified"] = n_verified
     state["last_decisions"] = len(decisions)
     state["last_executed"] = executed
     state["trades"] = trade_records[-200:]
     save_state(state_dir, state)
+
+    # Build rich Issue for execution results too
+    exec_issue_body = (
+        f"# v4.4 Pipeline: Execution Results\n\n"
+        f"{pipeline_text}"
+        f"{reject_line}"
+        f"{top5_text}"
+        f"## Execution Log\n```\n"
+        + "\n".join(logs[:50])
+        + "\n```\n\n"
+        f"{config_text}"
+    )
 
     title_issue = (
         f"run: {'DRY_RUN' if dry_run else 'LIVE'} "
         f"scanned={len(tradable)} candidates={len(candidates)} "
         f"decisions={len(decisions)} executed={executed}"
     )
-    body = "\n".join(logs[:50])
-    gh_issue(title_issue, body)
+    gh_issue(title_issue, exec_issue_body)
 
 
 if __name__ == "__main__":
