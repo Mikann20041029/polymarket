@@ -16,16 +16,27 @@ logger = logging.getLogger(__name__)
 API_URL = "https://api.elevenlabs.io/v1"
 
 
-def generate_speech(text: str, output_path: Path, voice_id: str = None) -> dict:
+def generate_speech(text: str, output_path: Path, voice_id: str = None,
+                    gender: str = "male") -> dict:
     """
     Generate expressive speech audio with word-level timestamps.
+
+    Args:
+        text: Text to speak
+        output_path: Where to save audio
+        voice_id: Override voice ID (if None, picks based on gender)
+        gender: "male" or "female" — selects the appropriate voice
 
     Returns dict with:
         - audio_path: path to mp3 file
         - alignment: list of {word, start, end} for subtitle sync
         - duration: total audio duration in seconds
     """
-    voice_id = voice_id or config.ELEVENLABS_VOICE_ID
+    if not voice_id:
+        if gender == "female" and config.ELEVENLABS_VOICE_ID_FEMALE:
+            voice_id = config.ELEVENLABS_VOICE_ID_FEMALE
+        else:
+            voice_id = config.ELEVENLABS_VOICE_ID
     if not voice_id:
         raise ValueError("ELEVENLABS_VOICE_ID not set in .env")
 
@@ -117,7 +128,8 @@ def generate_all_hack_audio(hacks: list[dict], output_dir: Path) -> list[dict]:
 
     for i, hack in enumerate(hacks):
         audio_path = output_dir / f"hack_{i+1}.mp3"
-        result = generate_speech(hack["narration"], audio_path)
+        gender = hack.get("character_gender", "male")
+        result = generate_speech(hack["narration"], audio_path, gender=gender)
         result["hack_number"] = hack.get("hack_number", i + 1)
         result["title"] = hack.get("title", "")
         results.append(result)

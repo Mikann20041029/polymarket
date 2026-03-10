@@ -11,11 +11,8 @@ on:
         description: "Number of hacks per video (2-4)"
         required: false
         default: "3"
-      use_together:
-        description: "Use Together API instead of DeepSeek"
-        required: false
-        type: boolean
-        default: false
+  schedule:
+    - cron: "0 */12 * * *"
 
 jobs:
   generate:
@@ -42,13 +39,12 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+          ELEVENLABS_VOICE_ID_FEMALE: ${{ secrets.ELEVENLABS_VOICE_ID_FEMALE }}
           FAL_KEY: ${{ secrets.FAL_KEY }}
-          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
         run: |
           python pipeline.py \
-            --topic "${{ github.event.inputs.topic }}" \
-            --num-hacks ${{ github.event.inputs.num_hacks }} \
-            ${{ github.event.inputs.use_together == 'true' && '--together' || '' }} \
+            --topic "${{ github.event.inputs.topic || 'kitchen and household' }}" \
+            --num-hacks ${{ github.event.inputs.num_hacks || '3' }} \
             --verbose
 
       - name: Upload generated video

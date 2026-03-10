@@ -8,7 +8,6 @@ anthropomorphic 3D Pixar-style object characters presenting life hacks.
 Usage:
     python pipeline.py --topic "kitchen hacks"
     python pipeline.py --topic "cleaning hacks" --num-hacks 3
-    python pipeline.py --topic "food storage" --together  # use Together instead of DeepSeek
 
 Pipeline:
     1. DeepSeek → script (hack ideas + narration + scene descriptions)
@@ -37,7 +36,6 @@ logger = logging.getLogger(__name__)
 def run_pipeline(
     topic: str = "kitchen and household",
     num_hacks: int = None,
-    use_together: bool = False,
     bgm_path: str = None,
     sfx_path: str = None,
     output_name: str = None,
@@ -61,7 +59,7 @@ def run_pipeline(
 
     # ── Step 1: Generate script ──────────────────────────
     logger.info("── Step 1/5: Generating script...")
-    hacks = generate_script(topic, num_hacks, use_together)
+    hacks = generate_script(topic, num_hacks)
 
     script_file = run_dir / "script.json"
     with open(script_file, "w") as f:
@@ -143,11 +141,6 @@ def main():
         help=f"Number of hacks per video (default: {config.HACKS_PER_VIDEO})",
     )
     parser.add_argument(
-        "--together",
-        action="store_true",
-        help="Use Together API instead of DeepSeek for script generation",
-    )
-    parser.add_argument(
         "--bgm",
         default=None,
         help="Path to background music file",
@@ -179,7 +172,6 @@ def main():
     result = run_pipeline(
         topic=args.topic,
         num_hacks=args.num_hacks,
-        use_together=args.together,
         bgm_path=args.bgm,
         sfx_path=args.sfx,
         output_name=args.output,
