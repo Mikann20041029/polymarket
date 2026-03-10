@@ -16,6 +16,31 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://api.elevenlabs.io/v1"
 
+# Default ElevenLabs voices as fallback when configured voice ID is invalid
+_DEFAULT_VOICES = {
+    "male": "TX3LPaxmHKxFdv7VOQHJ",    # Liam
+    "female": "EXAVITQu4vr4xnSDxMaL",   # Sarah
+}
+
+
+def _validate_voice_id(voice_id: str, api_key: str) -> str:
+    """
+    Validate a voice ID exists. If not, fall back to a default voice.
+    Returns a valid voice_id.
+    """
+    try:
+        resp = requests.get(
+            f"{API_URL}/voices/{voice_id}",
+            headers={"xi-api-key": api_key},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return voice_id
+        logger.warning(f"Voice ID '{voice_id}' returned {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"Voice ID validation failed: {e}")
+    return None
+
 
 def _get_audio_duration(path: str) -> float:
     """Get audio duration via ffprobe."""
@@ -81,7 +106,15 @@ def generate_speech(text: str, output_path: Path, voice_id: str = None,
         else:
             voice_id = config.ELEVENLABS_VOICE_ID
     if not voice_id:
-        raise ValueError("ELEVENLABS_VOICE_ID not set in .env")
+        logger.warning("No voice ID configured, using default")
+        voice_id = _DEFAULT_VOICES.get(gender, _DEFAULT_VOICES["male"])
+
+    # Validate the voice ID exists, fall back to default if not
+    validated = _validate_voice_id(voice_id, config.ELEVENLABS_API_KEY)
+    if not validated:
+        fallback = _DEFAULT_VOICES.get(gender, _DEFAULT_VOICES["male"])
+        logger.warning(f"Voice '{voice_id}' not found, falling back to default: {fallback}")
+        voice_id = fallback
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
