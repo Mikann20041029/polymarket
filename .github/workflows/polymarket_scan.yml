@@ -1,36 +1,59 @@
-name: polymarket-arb-scanner
+name: generate-lifehack-short
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/1 * * * *"
+    inputs:
+      topic:
+        description: "Life hack topic (e.g., kitchen, cleaning, food storage)"
+        required: false
+        default: "kitchen and household"
+      num_hacks:
+        description: "Number of hacks per video (2-4)"
+        required: false
+        default: "3"
+      use_together:
+        description: "Use Together API instead of DeepSeek"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-  scan:
+  generate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
-      issues: write
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install
-        run: pip install -r requirements.txt
-      - name: Run scanner
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
 
-          DRY_RUN: "1"
-          SCAN_MARKETS: "2000"
-          FEE_BPS: "0"
-          SLIPPAGE_BPS: "50"
-          FILL_RISK_BPS: "16"
-          MIN_VOLUME: "1000"
-          MIN_LIQUIDITY: "500"
-          CLOB_WORKERS: "15"
-          ARB_QUANTITY: "100"
-          TOP_N: "10"
-        run: python agent.py
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate life-hack short video
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+          FAL_KEY: ${{ secrets.FAL_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+        run: |
+          python pipeline.py \
+            --topic "${{ github.event.inputs.topic }}" \
+            --num-hacks ${{ github.event.inputs.num_hacks }} \
+            ${{ github.event.inputs.use_together == 'true' && '--together' || '' }} \
+            --verbose
+
+      - name: Upload generated video
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifehack-short-${{ github.run_number }}
+          path: output/*.mp4
+          retention-days: 30
