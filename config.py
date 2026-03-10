@@ -1,6 +1,6 @@
 """
 Configuration for Life-Hack Short Video Generator.
-APIs: DeepSeek (LLM) / ElevenLabs (TTS) / FAL (image+video) / Together (backup LLM)
+APIs: DeepSeek (LLM) / ElevenLabs (TTS) / FAL (image+video)
 """
 import os
 from pathlib import Path
@@ -12,7 +12,6 @@ load_dotenv()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 FAL_KEY = os.getenv("FAL_KEY", "")
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")
 
 # ── Paths ─────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -33,12 +32,9 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 SCRIPT_MAX_TOKENS = int(os.getenv("SCRIPT_MAX_TOKENS", "4096"))
 HACKS_PER_VIDEO = int(os.getenv("HACKS_PER_VIDEO", "3"))
 
-# ── Together (backup LLM) ────────────────────────────────
-TOGETHER_BASE_URL = "https://api.together.xyz/v1"
-TOGETHER_MODEL = os.getenv("TOGETHER_MODEL", "meta-llama/Llama-3.3-70B-Instruct-Turbo")
-
 # ── ElevenLabs TTS ───────────────────────────────────────
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+ELEVENLABS_VOICE_ID_FEMALE = os.getenv("ELEVENLABS_VOICE_ID_FEMALE", "")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 TTS_STABILITY = float(os.getenv("TTS_STABILITY", "0.3"))
 TTS_SIMILARITY_BOOST = float(os.getenv("TTS_SIMILARITY_BOOST", "0.85"))

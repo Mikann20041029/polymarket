@@ -42,6 +42,7 @@ For each hack, output this JSON structure:
     "hack_number": 1,
     "title": "Short catchy title (3-5 words)",
     "object_character": "the main object that speaks (e.g., broccoli, mug, sponge)",
+    "character_gender": "male or female — pick whichever fits the character's personality and voice better. Mix it up across hacks.",
     "narration": "The EXACT dialogue the object says. 40-60 words. Extremely expressive, comedic, emotional. Include [PAUSE], [EXCITED], [FRUSTRATED], [SMUG] emotion tags inline.",
     "scene_description": "Detailed visual: what the character looks like, its expression, what it's holding, the background (kitchen/household), lighting (warm, shallow DOF), camera angle (close-up or medium close-up)",
     "motion_prompt": "How the character moves: big arm gestures, exaggerated facial expressions, body bouncing, leaning forward, pointing, spinning, celebrating. Be VERY specific about physical movement.",
@@ -72,30 +73,21 @@ def _save_used_hacks(used: list[str]):
 def generate_script(
     topic: str = "kitchen and household",
     num_hacks: int = None,
-    use_together: bool = False,
 ) -> list[dict]:
     """
-    Generate life-hack script segments using DeepSeek (or Together as backup).
+    Generate life-hack script segments using DeepSeek.
 
     Returns list of hack dicts with narration, scene_description, motion_prompt, etc.
     """
     num_hacks = num_hacks or config.HACKS_PER_VIDEO
     used_hacks = _load_used_hacks()
 
-    if use_together:
-        client = OpenAI(
-            api_key=config.TOGETHER_API_KEY,
-            base_url=config.TOGETHER_BASE_URL,
-        )
-        model = config.TOGETHER_MODEL
-        logger.info(f"Using Together API: {model}")
-    else:
-        client = OpenAI(
-            api_key=config.DEEPSEEK_API_KEY,
-            base_url=config.DEEPSEEK_BASE_URL,
-        )
-        model = config.DEEPSEEK_MODEL
-        logger.info(f"Using DeepSeek API: {model}")
+    client = OpenAI(
+        api_key=config.DEEPSEEK_API_KEY,
+        base_url=config.DEEPSEEK_BASE_URL,
+    )
+    model = config.DEEPSEEK_MODEL
+    logger.info(f"Using DeepSeek API: {model}")
 
     used_str = "\n".join(f"- {h}" for h in used_hacks[-100:]) if used_hacks else "(none yet)"
     user_msg = HACK_TEMPLATE.format(
@@ -139,7 +131,6 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--topic", default="kitchen and household")
     p.add_argument("--num-hacks", type=int, default=None)
-    p.add_argument("--together", action="store_true", help="Use Together instead of DeepSeek")
     args = p.parse_args()
-    result = generate_script(args.topic, args.num_hacks, args.together)
+    result = generate_script(args.topic, args.num_hacks)
     print(json.dumps(result, indent=2, ensure_ascii=False))
