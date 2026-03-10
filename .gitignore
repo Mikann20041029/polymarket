@@ -5,5 +5,8 @@ __pycache__/
 *.mp3
 *.mp4
 *.wav
-!assets/characters/*.png
-!assets/characters/*.jpg
+*.png
+*.jpg
+!assets/**/*.png
+!assets/**/*.jpg
+data/used_hacks.json
