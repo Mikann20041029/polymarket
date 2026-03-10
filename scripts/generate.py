@@ -4,6 +4,7 @@ Generates English life-hack scripts with anthropomorphic object characters.
 Includes de-duplication to avoid repeating previously used hacks.
 """
 import json
+import re
 import logging
 import argparse
 from pathlib import Path
@@ -27,7 +28,7 @@ RULES:
 - Hacks should be genuinely useful, visually demonstrable, and kitchen/household-focused.
 - AVOID: dangerous, medical, misleading, or abstract-advice hacks.
 
-OUTPUT FORMAT: Return ONLY a valid JSON array. No markdown, no explanation."""
+OUTPUT FORMAT: Return a JSON object with a single key "hacks" containing the array. No markdown. Example: {"hacks": [...]}"""
 
 HACK_TEMPLATE = """Generate {num_hacks} unique life-hack segments for a vertical short video.
 
@@ -102,6 +103,7 @@ def generate_script(
         model=model,
         max_tokens=config.SCRIPT_MAX_TOKENS,
         temperature=0.9,
+        response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
@@ -109,13 +111,49 @@ def generate_script(
     )
 
     raw = resp.choices[0].message.content.strip()
-    # Strip markdown code fences
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1]
-    if raw.endswith("```"):
-        raw = raw[:-3].rstrip()
+    logger.debug(f"Raw LLM response (first 300 chars): {raw[:300]}")
 
-    hacks = json.loads(raw)
+    # Extract JSON array from response, handling markdown fences and surrounding text
+    # Method 1: Find JSON array with regex
+    match = re.search(r'\[[\s\S]*\]', raw)
+    if match:
+        json_str = match.group(0)
+    else:
+        # Method 2: Strip code fences manually
+        json_str = raw
+        if "```" in json_str:
+            # Remove everything before first ``` and after last ```
+            parts = json_str.split("```")
+            # Take the content between first pair of ```
+            if len(parts) >= 3:
+                json_str = parts[1]
+            elif len(parts) >= 2:
+                json_str = parts[1]
+            # Remove language identifier like "json"
+            if json_str.startswith("json"):
+                json_str = json_str[4:]
+            json_str = json_str.strip()
+
+    try:
+        parsed = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse failed: {e}")
+        logger.error(f"Attempted to parse: {json_str[:500]}")
+        raise ValueError(f"DeepSeek returned invalid JSON: {e}") from e
+
+    # Handle both {"hacks": [...]} and [...] formats
+    if isinstance(parsed, dict) and "hacks" in parsed:
+        hacks = parsed["hacks"]
+    elif isinstance(parsed, list):
+        hacks = parsed
+    else:
+        # Try to find any list value in the dict
+        for v in parsed.values():
+            if isinstance(v, list):
+                hacks = v
+                break
+        else:
+            raise ValueError(f"Unexpected JSON structure: {list(parsed.keys()) if isinstance(parsed, dict) else type(parsed)}")
 
     # Update de-duplication list
     new_titles = [h["title"] for h in hacks]
