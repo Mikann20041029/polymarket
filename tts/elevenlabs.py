@@ -191,48 +191,81 @@ def generate_speech(text: str, output_path: Path, voice_id: str = None,
 
     logger.info(f"TTS ({gender}): '{clean_text[:60]}...'")
 
-    # Try with-timestamps first
+    # Models to try in order (multilingual first, then monolingual as fallback)
+    models_to_try = [config.ELEVENLABS_MODEL]
+    if "multilingual" in config.ELEVENLABS_MODEL:
+        models_to_try.append("eleven_monolingual_v1")
+    elif "monolingual" in config.ELEVENLABS_MODEL:
+        models_to_try.append("eleven_multilingual_v2")
+
     alignment = []
-    try:
-        url = f"{API_URL}/text-to-speech/{voice_id}/with-timestamps"
-        resp = requests.post(url, headers=headers, json=payload, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+    last_error = None
 
-        import base64
-        audio_bytes = base64.b64decode(data["audio_base64"])
-        with open(output_path, "wb") as f:
-            f.write(audio_bytes)
+    for model_id in models_to_try:
+        payload["model_id"] = model_id
+        logger.info(f"Trying TTS model: {model_id}")
 
-        alignment = _parse_alignment(data.get("alignment", {}))
-        duration = alignment[-1]["end"] if alignment else _get_audio_duration(str(output_path))
-        logger.info(f"TTS done (with-timestamps): {duration:.1f}s")
+        # Try with-timestamps first
+        try:
+            url = f"{API_URL}/text-to-speech/{voice_id}/with-timestamps"
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
 
-    except requests.exceptions.HTTPError as e:
-        logger.warning(f"with-timestamps failed ({e}), using standard TTS...")
+            import base64
+            audio_bytes = base64.b64decode(data["audio_base64"])
+            with open(output_path, "wb") as f:
+                f.write(audio_bytes)
 
-        # Fallback: standard TTS endpoint (returns raw audio bytes)
-        url = f"{API_URL}/text-to-speech/{voice_id}"
-        headers_stream = {
-            "xi-api-key": config.ELEVENLABS_API_KEY,
-            "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
-        }
-        resp = requests.post(url, headers=headers_stream, json=payload, timeout=60)
-        resp.raise_for_status()
+            alignment = _parse_alignment(data.get("alignment", {}))
+            duration = alignment[-1]["end"] if alignment else _get_audio_duration(str(output_path))
+            logger.info(f"TTS done (with-timestamps, model={model_id}): {duration:.1f}s")
 
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
+            return {
+                "audio_path": str(output_path),
+                "alignment": alignment,
+                "duration": duration,
+            }
 
-        duration = _get_audio_duration(str(output_path))
-        alignment = _estimate_word_timing(clean_text, duration)
-        logger.info(f"TTS done (standard + estimated timing): {duration:.1f}s")
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"with-timestamps failed ({e}), trying standard TTS...")
 
-    return {
-        "audio_path": str(output_path),
-        "alignment": alignment,
-        "duration": duration,
-    }
+        # Fallback: standard TTS endpoint
+        try:
+            url = f"{API_URL}/text-to-speech/{voice_id}"
+            headers_stream = {
+                "xi-api-key": config.ELEVENLABS_API_KEY,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg",
+            }
+            resp = requests.post(url, headers=headers_stream, json=payload, timeout=60)
+            resp.raise_for_status()
+
+            with open(output_path, "wb") as f:
+                f.write(resp.content)
+
+            duration = _get_audio_duration(str(output_path))
+            alignment = _estimate_word_timing(clean_text, duration)
+            logger.info(f"TTS done (standard, model={model_id}): {duration:.1f}s")
+
+            return {
+                "audio_path": str(output_path),
+                "alignment": alignment,
+                "duration": duration,
+            }
+
+        except requests.exceptions.HTTPError as e:
+            last_error = e
+            logger.warning(f"Standard TTS also failed with model={model_id}: {e}")
+            continue
+
+    # All attempts failed
+    raise RuntimeError(
+        f"ElevenLabs TTS failed with all models {models_to_try} and voice {voice_id}. "
+        f"Last error: {last_error}. "
+        f"Check: 1) ELEVENLABS_API_KEY is valid 2) Account has TTS credits "
+        f"3) Subscription plan supports TTS"
+    )
 
 
 def _parse_alignment(raw_alignment: dict) -> list[dict]:
