@@ -4,10 +4,11 @@ Post-processing with FFmpeg.
 - Burns in word-synced subtitles (center-bottom, large, readable on mobile)
 - Adds SFX at transitions
 - Adds looping BGM at low volume
-- Stitches all mini-hack clips into one final 40-50s vertical short
+- Stitches all mini-hack clips into one final vertical short
 """
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 import config
@@ -69,9 +70,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not alignment:
             continue
 
-        for i in range(0, len(alignment), words_per_group):
-            group = alignment[i : i + words_per_group]
-            text = " ".join(w["word"] for w in group)
+        # Filter out non-word tokens (dots, ellipses, punctuation-only, empty)
+        clean_alignment = []
+        for w in alignment:
+            word = w.get("word", "").strip()
+            # Skip empty, pure punctuation, ellipsis, and junk tokens
+            cleaned = re.sub(r'[^a-zA-Z0-9\'-]', '', word)
+            if cleaned:
+                clean_alignment.append(w)
+
+        for i in range(0, len(clean_alignment), words_per_group):
+            group = clean_alignment[i : i + words_per_group]
+            # Clean each word: remove stray dots/special chars at edges
+            words = []
+            for w in group:
+                word = w["word"].strip().strip(".")
+                if word:
+                    words.append(word)
+            if not words:
+                continue
+            text = " ".join(words)
             t_start = offset + group[0]["start"]
             t_end = offset + group[-1]["end"] + 0.05
             lines.append(

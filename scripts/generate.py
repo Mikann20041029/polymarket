@@ -14,46 +14,67 @@ import config
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a viral short-video script writer for "Crazy Bird News" — a channel featuring
-stylized 3D animated household objects that come alive and explain life hacks.
+stylized 3D animated everyday objects that come alive and explain life hacks.
 
 RULES:
-- Each life hack features a DIFFERENT object as the speaking character (broccoli, mug, sponge, knife, pan, etc.)
+- Each life hack features a DIFFERENT object as the speaking character.
+  Objects can be ANYTHING relevant to the hack: tools, gadgets, food items, cleaning supplies,
+  office supplies, tech accessories, clothing items, bathroom items, outdoor gear, etc.
 - The object IS the star. It has a face, arms, hands, and a big personality.
 - Write in English only.
-- Voice style: HIGH-ENERGY, manic, comedic, exaggerated, emotionally chaotic.
-  Think: panic → smugness → excitement → mock seriousness → relief. Never flat or calm.
-- Each hack is 15-20 seconds when spoken aloud (roughly 40-60 words).
-- Start each hack with a dramatic emotional hook (frustration, panic, outrage).
-- End each hack with a punchline, payoff, or smug satisfaction.
-- Hacks should be genuinely useful, visually demonstrable, and kitchen/household-focused.
-- AVOID: dangerous, medical, misleading, or abstract-advice hacks.
+- Voice style: EXTREMELY expressive, manic, comedic, exaggerated, emotionally chaotic.
+  Think: dramatic panic → smug realization → explosive excitement → mock seriousness → triumphant relief.
+  Each sentence should have a DIFFERENT emotional energy. NEVER flat, NEVER monotone, NEVER calm.
+  Use dramatic pauses, speed changes, whispers-to-shouts, and rhetorical questions.
+- Each hack narration must be 80-120 words (about 30-45 seconds when spoken).
+  This is CRITICAL — short narrations are boring. Pack in personality, reactions, and detail.
+- Start each hack with an EXPLOSIVE emotional hook that grabs attention in the first 2 seconds.
+  Examples: "WAIT WAIT WAIT—", "Oh. My. GOD.", "You've been doing WHAT?!", "Listen. LISTEN."
+- Build tension in the middle with vivid descriptions and emotional reactions.
+- End each hack with a satisfying punchline, callback, or mic-drop moment.
+- Hacks MUST be genuinely surprising, counterintuitive, and make viewers say "NO WAY!"
+  They should be the kind of facts/tricks people IMMEDIATELY want to share with friends.
+- Cover ALL areas of life: kitchen, cleaning, tech, clothing, travel, health/wellness,
+  productivity, money-saving, car care, gardening, social situations, DIY, beauty, etc.
+- AVOID: dangerous, medical diagnoses, misleading, or vague/abstract-advice hacks.
+- Do NOT include emotion tags like [PAUSE] or [EXCITED] in the narration text.
+  Instead, convey emotion purely through word choice, punctuation, and sentence rhythm.
+  Use "..." for natural pauses, ALL CAPS for emphasis, and "—" for dramatic interruptions.
 
 OUTPUT FORMAT: Return a JSON object with a single key "hacks" containing the array. No markdown. Example: {"hacks": [...]}"""
 
 HACK_TEMPLATE = """Generate {num_hacks} unique life-hack segments for a vertical short video.
 
-Topic preference: {topic}
+Topic/category preference: {topic}
+(But you are NOT limited to this — pick the most VIRAL, JAW-DROPPING hacks regardless of category.
+Mix categories for variety: one might be kitchen, another tech, another clothing, etc.)
 
 PREVIOUSLY USED HACKS (DO NOT REPEAT THESE):
 {used_hacks}
+
+QUALITY BAR: Each hack must pass this test:
+- Would someone say "NO WAY, I didn't know that!" when they hear it?
+- Would someone screenshot this to send to a friend?
+- Is this genuinely useful AND surprising at the same time?
+If a hack doesn't pass ALL three, pick a better one.
 
 For each hack, output this JSON structure:
 [
   {{
     "hack_number": 1,
     "title": "Short catchy title (3-5 words)",
-    "object_character": "the main object that speaks (e.g., broccoli, mug, sponge)",
+    "object_character": "the main object that speaks — can be ANY everyday object relevant to the hack (e.g., shoe, phone charger, ice cube tray, zipper, wrench, sponge, lemon, rubber band, binder clip, dryer sheet, etc.)",
     "character_gender": "male or female — pick whichever fits the character's personality and voice better. Mix it up across hacks.",
-    "narration": "The EXACT dialogue the object says. 40-60 words. Extremely expressive, comedic, emotional. Include [PAUSE], [EXCITED], [FRUSTRATED], [SMUG] emotion tags inline.",
-    "scene_description": "Detailed visual: what the character looks like, its expression, what it's holding, the background (kitchen/household), lighting (warm, shallow DOF), camera angle (close-up or medium close-up)",
-    "motion_prompt": "How the character moves: big arm gestures, exaggerated facial expressions, body bouncing, leaning forward, pointing, spinning, celebrating. Be VERY specific about physical movement.",
+    "narration": "The EXACT dialogue the object says. MUST be 80-120 words. Extremely expressive, comedic, emotional. Use '...' for pauses, ALL CAPS for emphasis, '—' for interruptions. Do NOT use [EMOTION] tags. Every sentence should feel like a different emotional beat. Include rhetorical questions, exclamations, dramatic reveals.",
+    "scene_description": "Detailed visual: what the character looks like, its expression, what it's holding or demonstrating, the specific background setting, warm cinematic lighting, shallow depth of field, camera angle (close-up or medium close-up). Be SPECIFIC about colors, materials, and textures.",
+    "motion_prompt": "Extremely detailed movement: big arm gestures, exaggerated facial expressions (eyes widening, jaw dropping, eyebrows shooting up), body bouncing, leaning forward conspiratorially, pointing at camera, spinning in excitement, victory dance, face-palming. Describe SPECIFIC movements for SPECIFIC moments in the narration.",
     "sfx_cues": ["list", "of", "sound", "effects"],
-    "emotional_arc": "e.g., panic → realization → smug satisfaction"
+    "emotional_arc": "e.g., outraged disbelief → conspiratorial whisper → explosive revelation → smug triumph"
   }}
 ]
 
-Make each hack's character, tone, and emotional arc DIFFERENT from the others.
-The hacks should flow well when stitched together in sequence."""
+Make each hack's character, topic category, tone, and emotional arc COMPLETELY DIFFERENT from the others.
+The hacks should create variety and surprise when stitched together in sequence."""
 
 
 def _load_used_hacks() -> list[str]:
@@ -72,7 +93,7 @@ def _save_used_hacks(used: list[str]):
 
 
 def generate_script(
-    topic: str = "kitchen and household",
+    topic: str = "life hacks across all categories",
     num_hacks: int = None,
 ) -> list[dict]:
     """
@@ -167,7 +188,7 @@ def generate_script(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     p = argparse.ArgumentParser()
-    p.add_argument("--topic", default="kitchen and household")
+    p.add_argument("--topic", default="life hacks across all categories")
     p.add_argument("--num-hacks", type=int, default=None)
     args = p.parse_args()
     result = generate_script(args.topic, args.num_hacks)

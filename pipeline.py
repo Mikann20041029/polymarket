@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_pipeline(
-    topic: str = "kitchen and household",
+    topic: str = "life hacks across all categories",
     num_hacks: int = None,
     bgm_path: str = None,
     sfx_path: str = None,
@@ -131,8 +131,8 @@ def main():
     )
     parser.add_argument(
         "--topic",
-        default="kitchen and household",
-        help="Topic for life hacks (default: kitchen and household)",
+        default="life hacks across all categories",
+        help="Topic for life hacks (default: life hacks across all categories)",
     )
     parser.add_argument(
         "--num-hacks",

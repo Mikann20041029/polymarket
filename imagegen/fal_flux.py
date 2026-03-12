@@ -13,14 +13,19 @@ import config
 logger = logging.getLogger(__name__)
 
 CHARACTER_STYLE = (
-    "High-quality stylized 3D animated character render, "
-    "Pixar/Disney movie quality, cute anthropomorphic object, "
-    "the object has a face with big expressive eyes and eyebrows and a wide mouth, "
-    "the object has small arms with hands attached to its body, "
-    "warm indoor kitchen lighting, shallow depth of field, "
-    "cinematic composition, clean background, "
-    "vertical 9:16 portrait framing, character large in frame, "
-    "family-friendly, toy-like feel, professional 3D animation quality"
+    "Ultra-high-quality Pixar movie screenshot, professional 3D CGI render, "
+    "ray-traced global illumination, subsurface scattering on materials, "
+    "cute anthropomorphic object character with Disney-Pixar level detail, "
+    "the object has a face with huge glossy expressive eyes with specular highlights, "
+    "thick animated eyebrows, wide elastic mouth showing emotion, "
+    "small stubby arms with mitten-like hands attached to its body, "
+    "the character has a polished toy-like material finish with subtle reflections, "
+    "warm cinematic indoor lighting with volumetric light rays, "
+    "extremely shallow depth of field with beautiful bokeh, "
+    "clean soft-gradient background, professional film color grading, "
+    "vertical 9:16 portrait framing, character fills 70% of frame, "
+    "looks like an actual frame from a Pixar feature film, "
+    "family-friendly, masterpiece quality, 8K detail"
 )
 
 
@@ -45,17 +50,18 @@ def generate_character_image(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = (
-        f"A cute anthropomorphic {object_name} character, "
-        f"the {object_name} has a cartoon face with big expressive eyes and a wide mouth, "
-        f"small stubby arms with hands, standing upright, "
+        f"Pixar movie screenshot: a lovable anthropomorphic {object_name} character, "
+        f"the {object_name} is alive with a cartoon face — huge shiny eyes, expressive eyebrows, elastic wide mouth, "
+        f"tiny stubby arms with mitten hands, standing upright with personality, "
         f"{scene_description}. "
         f"{CHARACTER_STYLE}"
     )
 
     negative_prompt = (
-        "realistic photo, ugly, deformed, blurry, low quality, text, watermark, "
-        "2D flat illustration, human, person, anime style, dark, scary, "
-        "multiple characters, split screen"
+        "realistic photo, photograph, ugly, deformed, disfigured, blurry, low quality, "
+        "text, watermark, logo, 2D, flat illustration, hand-drawn, sketch, "
+        "human, person, anime style, dark, horror, scary, grotesque, "
+        "multiple characters, split screen, collage, border, frame"
     )
 
     logger.info(f"Generating image: {object_name} — '{scene_description[:50]}...'")
