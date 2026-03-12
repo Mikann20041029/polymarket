@@ -6,6 +6,7 @@ Estimates word-level timing from audio duration for subtitle sync.
 import io
 import json
 import logging
+import re
 import argparse
 import subprocess
 from pathlib import Path
@@ -16,30 +17,86 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://api.elevenlabs.io/v1"
 
-# Default ElevenLabs voices as fallback when configured voice ID is invalid
-_DEFAULT_VOICES = {
-    "male": "TX3LPaxmHKxFdv7VOQHJ",    # Liam
-    "female": "EXAVITQu4vr4xnSDxMaL",   # Sarah
-}
+# Cache for available voices (fetched once per run)
+_available_voices_cache = None
 
 
-def _validate_voice_id(voice_id: str, api_key: str) -> str:
-    """
-    Validate a voice ID exists. If not, fall back to a default voice.
-    Returns a valid voice_id.
-    """
+def _get_available_voices(api_key: str) -> list[dict]:
+    """Fetch all voices available to this ElevenLabs account."""
+    global _available_voices_cache
+    if _available_voices_cache is not None:
+        return _available_voices_cache
+
     try:
         resp = requests.get(
-            f"{API_URL}/voices/{voice_id}",
+            f"{API_URL}/voices",
             headers={"xi-api-key": api_key},
-            timeout=10,
+            timeout=15,
         )
-        if resp.status_code == 200:
-            return voice_id
-        logger.warning(f"Voice ID '{voice_id}' returned {resp.status_code}")
+        resp.raise_for_status()
+        voices = resp.json().get("voices", [])
+        _available_voices_cache = voices
+        logger.info(f"Found {len(voices)} available voices on account")
+        for v in voices[:5]:
+            labels = v.get("labels", {})
+            logger.info(f"  Voice: '{v['name']}' ({v['voice_id']}) gender={labels.get('gender', '?')}")
+        return voices
     except Exception as e:
-        logger.warning(f"Voice ID validation failed: {e}")
-    return None
+        logger.error(f"Failed to fetch available voices: {e}")
+        _available_voices_cache = []
+        return []
+
+
+def _pick_voice(api_key: str, gender: str = "male") -> str | None:
+    """Pick a suitable voice from the account's available voices."""
+    voices = _get_available_voices(api_key)
+    if not voices:
+        return None
+
+    # Prefer voices matching the requested gender
+    for v in voices:
+        labels = v.get("labels", {})
+        v_gender = labels.get("gender", "").lower()
+        if v_gender == gender:
+            logger.info(f"Selected voice: '{v['name']}' ({v['voice_id']}) for gender={gender}")
+            return v["voice_id"]
+
+    # No gender match — just use the first available voice
+    v = voices[0]
+    logger.info(f"Selected voice (no gender match): '{v['name']}' ({v['voice_id']})")
+    return v["voice_id"]
+
+
+def _resolve_voice_id(voice_id: str | None, api_key: str, gender: str) -> str:
+    """
+    Resolve a working voice ID. Tries in order:
+    1. The provided voice_id (if valid)
+    2. A voice from the account matching the gender
+    3. Any available voice from the account
+    Raises ValueError if no voice can be found at all.
+    """
+    # Try the provided voice ID first
+    if voice_id:
+        try:
+            resp = requests.get(
+                f"{API_URL}/voices/{voice_id}",
+                headers={"xi-api-key": api_key},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return voice_id
+            logger.warning(f"Voice ID '{voice_id}' returned {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"Voice ID validation failed: {e}")
+
+    # Fall back to account voices
+    fallback = _pick_voice(api_key, gender)
+    if fallback:
+        return fallback
+
+    raise ValueError(
+        "No usable voice found. Check ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in secrets."
+    )
 
 
 def _get_audio_duration(path: str) -> float:
@@ -100,27 +157,19 @@ def generate_speech(text: str, output_path: Path, voice_id: str = None,
         - alignment: list of {word, start, end} for subtitle sync
         - duration: total audio duration in seconds
     """
+    # Resolve voice ID: try configured → account voices → error
     if not voice_id:
         if gender == "female" and config.ELEVENLABS_VOICE_ID_FEMALE:
             voice_id = config.ELEVENLABS_VOICE_ID_FEMALE
         else:
             voice_id = config.ELEVENLABS_VOICE_ID
-    if not voice_id:
-        logger.warning("No voice ID configured, using default")
-        voice_id = _DEFAULT_VOICES.get(gender, _DEFAULT_VOICES["male"])
 
-    # Validate the voice ID exists, fall back to default if not
-    validated = _validate_voice_id(voice_id, config.ELEVENLABS_API_KEY)
-    if not validated:
-        fallback = _DEFAULT_VOICES.get(gender, _DEFAULT_VOICES["male"])
-        logger.warning(f"Voice '{voice_id}' not found, falling back to default: {fallback}")
-        voice_id = fallback
+    voice_id = _resolve_voice_id(voice_id, config.ELEVENLABS_API_KEY, gender)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Strip any leftover emotion tags completely (not replacing with dots)
-    import re
     clean_text = re.sub(r'\[(?:PAUSE|EXCITED|FRUSTRATED|SMUG|PANIC|RELIEF|SERIOUS|HAPPY|[A-Z]+)\]', '', text)
     # Collapse multiple spaces and clean up
     clean_text = re.sub(r'  +', ' ', clean_text).strip()
