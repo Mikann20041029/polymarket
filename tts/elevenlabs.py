@@ -110,8 +110,8 @@ async def _generate_edge_tts(text: str, output_path: Path, voice: str) -> dict:
     communicate = edge_tts.Communicate(
         text,
         voice,
-        rate="+5%",   # Slightly faster for energetic feel
-        pitch="+2Hz",  # Slightly higher for animation character feel
+        rate="+20%",   # Faster for energetic, punchy delivery
+        pitch="+5Hz",  # Higher for animated character feel
     )
 
     sub_maker = edge_tts.SubMaker()
@@ -161,8 +161,11 @@ def generate_speech(text: str, output_path: Path, voice_id: str = None,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Strip any leftover emotion tags completely
+    # Strip emotion tags and problematic punctuation for clean TTS
     clean_text = re.sub(r'\[(?:PAUSE|EXCITED|FRUSTRATED|SMUG|PANIC|RELIEF|SERIOUS|HAPPY|[A-Z]+)\]', '', text)
+    # Replace ellipsis with comma-pause (avoids TTS reading "dot dot dot")
+    clean_text = re.sub(r'\.{2,}', ',', clean_text)
+    # Collapse multiple spaces/punctuation
     clean_text = re.sub(r'  +', ' ', clean_text).strip()
 
     # Select voice
