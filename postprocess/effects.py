@@ -70,23 +70,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not alignment:
             continue
 
-        # Filter out non-word tokens (dots, ellipses, punctuation-only, empty)
+        # Filter: keep only entries that contain at least one letter or digit
         clean_alignment = []
         for w in alignment:
-            word = w.get("word", "").strip()
-            # Skip empty, pure punctuation, ellipsis, and junk tokens
-            cleaned = re.sub(r'[^a-zA-Z0-9\'-]', '', word)
-            if cleaned:
+            raw_word = w.get("word", "").strip()
+            # Must contain at least one alphanumeric character
+            if re.search(r'[a-zA-Z0-9]', raw_word):
                 clean_alignment.append(w)
 
         for i in range(0, len(clean_alignment), words_per_group):
             group = clean_alignment[i : i + words_per_group]
-            # Clean each word: remove stray dots/special chars at edges
+            # Strip leading/trailing punctuation for display
             words = []
             for w in group:
-                word = w["word"].strip().strip(".")
-                if word:
-                    words.append(word)
+                # Remove surrounding quotes, dots, dashes but keep apostrophes/hyphens inside words
+                display = re.sub(r'^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$', '', w["word"])
+                if display:
+                    words.append(display)
             if not words:
                 continue
             text = " ".join(words)
@@ -110,18 +110,44 @@ def _overlay_audio_on_clip(
     audio_path: str,
     output_path: str,
 ) -> str:
-    """Replace video audio track with TTS audio, trimmed to the shorter duration."""
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-i", audio_path,
-        "-map", "0:v",
-        "-map", "1:a",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
-        output_path,
-    ]
+    """
+    Loop video clip to match TTS audio duration, then overlay audio.
+    Video clips are typically 6-10s but narration can be 20-40s,
+    so the video is looped seamlessly to fill the audio length.
+    """
+    # Get audio duration to know how long video should be
+    audio_dur = _ffprobe_duration(audio_path)
+    video_dur = _ffprobe_duration(video_path)
+
+    if audio_dur <= video_dur:
+        # Audio fits within video — just overlay and trim to audio length
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", audio_path,
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "192k",
+            "-t", str(audio_dur),
+            output_path,
+        ]
+    else:
+        # Audio is longer — loop video to match audio duration
+        cmd = [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1",  # Loop video infinitely
+            "-i", video_path,
+            "-i", audio_path,
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "192k",
+            "-t", str(audio_dur),  # Cut to exact audio length
+            output_path,
+        ]
+
+    logger.info(f"Overlay: video={video_dur:.1f}s, audio={audio_dur:.1f}s → output={audio_dur:.1f}s")
     subprocess.run(cmd, capture_output=True, check=True)
     return output_path
 

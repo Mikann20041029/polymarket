@@ -39,7 +39,8 @@ RULES:
 - AVOID: dangerous, medical diagnoses, misleading, or vague/abstract-advice hacks.
 - Do NOT include emotion tags like [PAUSE] or [EXCITED] in the narration text.
   Instead, convey emotion purely through word choice, punctuation, and sentence rhythm.
-  Use "..." for natural pauses, ALL CAPS for emphasis, and "—" for dramatic interruptions.
+  Use ALL CAPS for emphasis and "—" for dramatic interruptions.
+  Do NOT use "..." (ellipsis) — it breaks subtitle sync. Use "—" or short sentences instead.
 
 OUTPUT FORMAT: Return a JSON object with a single key "hacks" containing the array. No markdown. Example: {"hacks": [...]}"""
 
@@ -52,11 +53,19 @@ Mix categories for variety: one might be kitchen, another tech, another clothing
 PREVIOUSLY USED HACKS (DO NOT REPEAT THESE):
 {used_hacks}
 
-QUALITY BAR: Each hack must pass this test:
+QUALITY BAR: Each hack must pass ALL of these tests:
 - Would someone say "NO WAY, I didn't know that!" when they hear it?
 - Would someone screenshot this to send to a friend?
 - Is this genuinely useful AND surprising at the same time?
-If a hack doesn't pass ALL three, pick a better one.
+- Does it include a SPECIFIC detail? (exact number, percentage, time, brand name, scientific name, etc.)
+  BAD: "Toothpaste can clean stuff" → GOOD: "Toothpaste removes 90% of sneaker scuff marks in 30 seconds"
+  BAD: "Rice helps with wet phones" → GOOD: "Silica gel packets absorb moisture 3x faster than rice for wet phones"
+  BAD: "Freezing jeans cleans them" → GOOD: "Freezing jeans at -18°C for 24 hours kills 99% of odor bacteria WITHOUT washing"
+If a hack fails ANY test, replace it with a better one.
+
+BANNED HACK TYPES (too common, boring, everyone knows them):
+- Putting phone in rice, banana peel shoe polish, frozen grapes as ice cubes,
+  binder clip cable organizer, rubber band jar opener, lemon microwave cleaner
 
 For each hack, output this JSON structure:
 [
@@ -65,7 +74,7 @@ For each hack, output this JSON structure:
     "title": "Short catchy title (3-5 words)",
     "object_character": "the main object that speaks — can be ANY everyday object relevant to the hack (e.g., shoe, phone charger, ice cube tray, zipper, wrench, sponge, lemon, rubber band, binder clip, dryer sheet, etc.)",
     "character_gender": "male or female — pick whichever fits the character's personality and voice better. Mix it up across hacks.",
-    "narration": "The EXACT dialogue the object says. MUST be 80-120 words. Extremely expressive, comedic, emotional. Use '...' for pauses, ALL CAPS for emphasis, '—' for interruptions. Do NOT use [EMOTION] tags. Every sentence should feel like a different emotional beat. Include rhetorical questions, exclamations, dramatic reveals.",
+    "narration": "The EXACT dialogue the object says. MUST be 80-120 words. Extremely expressive, comedic, emotional. Use ALL CAPS for emphasis, '—' for interruptions. Do NOT use [EMOTION] tags or '...' (they break subtitles). Every sentence must be a different emotional beat. MUST include at least ONE specific number, stat, or measurement. Include rhetorical questions, exclamations, dramatic reveals. End with a punchy one-liner.",
     "scene_description": "Detailed visual: what the character looks like, its expression, what it's holding or demonstrating, the specific background setting, warm cinematic lighting, shallow depth of field, camera angle (close-up or medium close-up). Be SPECIFIC about colors, materials, and textures.",
     "motion_prompt": "Extremely detailed movement: big arm gestures, exaggerated facial expressions (eyes widening, jaw dropping, eyebrows shooting up), body bouncing, leaning forward conspiratorially, pointing at camera, spinning in excitement, victory dance, face-palming. Describe SPECIFIC movements for SPECIFIC moments in the narration.",
     "sfx_cues": ["list", "of", "sound", "effects"],
