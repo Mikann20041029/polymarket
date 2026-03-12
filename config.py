@@ -29,16 +29,16 @@ for d in [OUTPUT_DIR, TEMP_DIR, DATA_DIR, BGM_DIR, SFX_DIR]:
 # ── DeepSeek LLM (script generation) ─────────────────────
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-SCRIPT_MAX_TOKENS = int(os.getenv("SCRIPT_MAX_TOKENS", "4096"))
+SCRIPT_MAX_TOKENS = int(os.getenv("SCRIPT_MAX_TOKENS", "8192"))
 HACKS_PER_VIDEO = int(os.getenv("HACKS_PER_VIDEO", "3"))
 
 # ── ElevenLabs TTS ───────────────────────────────────────
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 ELEVENLABS_VOICE_ID_FEMALE = os.getenv("ELEVENLABS_VOICE_ID_FEMALE", "")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
-TTS_STABILITY = float(os.getenv("TTS_STABILITY", "0.3"))
-TTS_SIMILARITY_BOOST = float(os.getenv("TTS_SIMILARITY_BOOST", "0.85"))
-TTS_STYLE = float(os.getenv("TTS_STYLE", "0.8"))
+TTS_STABILITY = float(os.getenv("TTS_STABILITY", "0.15"))
+TTS_SIMILARITY_BOOST = float(os.getenv("TTS_SIMILARITY_BOOST", "0.80"))
+TTS_STYLE = float(os.getenv("TTS_STYLE", "1.0"))
 TTS_USE_SPEAKER_BOOST = True
 
 # ── FAL (image generation - FLUX) ────────────────────────

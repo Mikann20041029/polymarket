@@ -119,15 +119,11 @@ def generate_speech(text: str, output_path: Path, voice_id: str = None,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Strip emotion tags for TTS
-    clean_text = text
-    for tag in ["[PAUSE]", "[EXCITED]", "[FRUSTRATED]", "[SMUG]",
-                "[PANIC]", "[RELIEF]", "[SERIOUS]", "[HAPPY]"]:
-        clean_text = clean_text.replace(tag, "...")
-    # Clean up multiple dots
-    while "......" in clean_text:
-        clean_text = clean_text.replace("......", "...")
-    clean_text = clean_text.strip()
+    # Strip any leftover emotion tags completely (not replacing with dots)
+    import re
+    clean_text = re.sub(r'\[(?:PAUSE|EXCITED|FRUSTRATED|SMUG|PANIC|RELIEF|SERIOUS|HAPPY|[A-Z]+)\]', '', text)
+    # Collapse multiple spaces and clean up
+    clean_text = re.sub(r'  +', ' ', clean_text).strip()
 
     headers = {
         "xi-api-key": config.ELEVENLABS_API_KEY,

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       topic:
-        description: "Life hack topic (e.g., kitchen, cleaning, food storage)"
+        description: "Life hack topic (e.g., kitchen, tech, clothing, productivity, or 'all categories')"
         required: false
-        default: "kitchen and household"
+        default: "life hacks across all categories"
       num_hacks:
         description: "Number of hacks per video (2-4)"
         required: false
@@ -43,7 +43,7 @@ jobs:
           FAL_KEY: ${{ secrets.FAL_KEY }}
         run: |
           python pipeline.py \
-            --topic "${{ github.event.inputs.topic || 'kitchen and household' }}" \
+            --topic "${{ github.event.inputs.topic || 'life hacks across all categories' }}" \
             --num-hacks ${{ github.event.inputs.num_hacks || '3' }} \
             --verbose
 
