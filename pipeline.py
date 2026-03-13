@@ -5,21 +5,19 @@ Life-Hack Short Video Generator — Main Pipeline
 Generates a complete vertical short video (40-50 seconds) featuring
 anthropomorphic 3D Pixar-style object characters presenting life hacks.
 
+Optimized for speed:
+- Image generation runs in parallel (all hacks at once)
+- Video generation runs in parallel (all hacks at once)
+- Total pipeline: ~10-15 minutes instead of 25-35 minutes
+
 Usage:
     python pipeline.py --topic "kitchen hacks"
     python pipeline.py --topic "cleaning hacks" --num-hacks 3
-
-Pipeline:
-    1. DeepSeek → script (hack ideas + narration + scene descriptions)
-    2. ElevenLabs → expressive TTS audio with word-level timestamps
-    3. FAL FLUX → 3D character images (anthropomorphic objects)
-    4. FAL Hailuo 2.3 Fast → animated video clips (6-10s each)
-    5. FFmpeg → overlay audio, burn subtitles, add BGM, stitch into one short
 """
 import json
 import logging
 import argparse
-import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -33,6 +31,13 @@ from postprocess.effects import compose_final_video
 logger = logging.getLogger(__name__)
 
 
+def _log_timing(step_name: str, start: float) -> float:
+    """Log how long a step took and return current time."""
+    elapsed = time.time() - start
+    logger.info(f"  ⏱ {step_name}: {elapsed:.1f}s")
+    return time.time()
+
+
 def run_pipeline(
     topic: str = "life hacks across all categories",
     num_hacks: int = None,
@@ -43,8 +48,17 @@ def run_pipeline(
     """
     Run the full video generation pipeline.
 
+    Timeline (parallel execution):
+      Step 1: Script gen (DeepSeek)      ~10-15s
+      Step 2: TTS audio (Edge TTS)       ~15-30s
+      Step 3: Images (FAL FLUX) x3       ~2-3min  (PARALLEL)
+      Step 4: Videos (FAL Hailuo) x3     ~5-8min  (PARALLEL)
+      Step 5: FFmpeg post-process         ~1-2min
+      TOTAL:                              ~10-15min
+
     Returns path to the final output video.
     """
+    pipeline_start = time.time()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = config.OUTPUT_DIR / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -56,6 +70,8 @@ def run_pipeline(
 
     logger.info(f"=== PIPELINE START: topic='{topic}' ===")
     logger.info(f"Run directory: {run_dir}")
+
+    step_time = time.time()
 
     # ── Step 1: Generate script ──────────────────────────
     logger.info("── Step 1/5: Generating script...")
@@ -69,6 +85,8 @@ def run_pipeline(
     for h in hacks:
         logger.info(f"  #{h['hack_number']}: {h['title']} ({h['object_character']})")
 
+    step_time = _log_timing("Script generation", step_time)
+
     # ── Step 2: Generate TTS audio ───────────────────────
     logger.info("── Step 2/5: Generating TTS audio...")
     audio_dir = run_dir / "audio"
@@ -81,17 +99,23 @@ def run_pipeline(
     total_audio = sum(r["duration"] for r in tts_results)
     logger.info(f"TTS done: {total_audio:.1f}s total audio")
 
-    # ── Step 3: Generate character images ────────────────
-    logger.info("── Step 3/5: Generating character images...")
+    step_time = _log_timing("TTS generation", step_time)
+
+    # ── Step 3: Generate character images (PARALLEL) ─────
+    logger.info("── Step 3/5: Generating character images (parallel)...")
     images_dir = run_dir / "images"
     image_paths = generate_all_hack_images(hacks, images_dir)
     logger.info(f"Images done: {len(image_paths)} images")
 
-    # ── Step 4: Generate animated video clips ────────────
-    logger.info("── Step 4/5: Generating animated video clips...")
+    step_time = _log_timing("Image generation (parallel)", step_time)
+
+    # ── Step 4: Generate animated video clips (PARALLEL) ─
+    logger.info("── Step 4/5: Generating animated video clips (parallel)...")
     videos_dir = run_dir / "videos"
     video_paths = generate_all_hack_videos(hacks, image_paths, videos_dir)
     logger.info(f"Videos done: {len(video_paths)} clips")
+
+    step_time = _log_timing("Video generation (parallel)", step_time)
 
     # ── Step 5: Post-process and compose ─────────────────
     logger.info("── Step 5/5: Composing final video...")
@@ -118,7 +142,10 @@ def run_pipeline(
         sfx_transition_path=sfx_path,
     )
 
-    logger.info(f"=== PIPELINE COMPLETE ===")
+    _log_timing("Post-processing", step_time)
+
+    total_elapsed = time.time() - pipeline_start
+    logger.info(f"=== PIPELINE COMPLETE in {total_elapsed:.1f}s ({total_elapsed/60:.1f}min) ===")
     logger.info(f"Final video: {result}")
     logger.info(f"Run data saved in: {run_dir}")
 

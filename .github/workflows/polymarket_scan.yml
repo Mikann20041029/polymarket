@@ -17,7 +17,7 @@ on:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     permissions:
       contents: read
 
@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -35,6 +36,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Generate life-hack short video
+        timeout-minutes: 20
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           FAL_KEY: ${{ secrets.FAL_KEY }}
@@ -45,8 +47,10 @@ jobs:
             --verbose
 
       - name: Upload generated video
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: lifehack-short-${{ github.run_number }}
           path: output/*.mp4
           retention-days: 30
+          if-no-files-found: warn

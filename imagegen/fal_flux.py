@@ -1,10 +1,12 @@
 """
 Image generation using FAL FLUX API.
 Generates 3D Pixar-style anthropomorphic object character images.
+Supports parallel generation for multiple hacks.
 """
 import os
 import logging
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import requests
 import fal_client
@@ -91,21 +93,29 @@ def generate_character_image(
 
 
 def generate_all_hack_images(hacks: list[dict], output_dir: Path) -> list[str]:
-    """Generate character images for all hacks."""
+    """Generate character images for all hacks IN PARALLEL."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
 
-    for i, hack in enumerate(hacks):
+    def _gen_one(i: int, hack: dict) -> tuple[int, str]:
         out = output_dir / f"hack_{i+1}.png"
         path = generate_character_image(
             object_name=hack["object_character"],
             scene_description=hack["scene_description"],
             output_path=out,
         )
-        paths.append(path)
         logger.info(f"Image {i+1}/{len(hacks)} done")
+        return (i, path)
 
+    # Run all image generations in parallel
+    paths = [None] * len(hacks)
+    with ThreadPoolExecutor(max_workers=len(hacks)) as executor:
+        futures = {executor.submit(_gen_one, i, h): i for i, h in enumerate(hacks)}
+        for future in as_completed(futures):
+            idx, path = future.result()
+            paths[idx] = path
+
+    logger.info(f"All {len(hacks)} images generated in parallel")
     return paths
 
 
