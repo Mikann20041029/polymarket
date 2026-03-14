@@ -1,44 +1,55 @@
 #!/usr/bin/env python3
 """
-Life-Hack Short Video Generator — Main Pipeline
+Impossible Satisfying Video Generator — Main Pipeline
 
-Generates a complete vertical short video (40-50 seconds) featuring
-anthropomorphic 3D Pixar-style object characters presenting life hacks
-with lip-synced speech animation.
+Generates surreal, physics-defying, oddly satisfying vertical short videos
+(15-30 seconds) with matching ASMR sound effects. No language needed.
 
 Usage:
-    python pipeline.py --topic "kitchen hacks"
-    python pipeline.py --topic "cleaning hacks" --num-hacks 3
+    python pipeline.py --theme "glass and crystal"
+    python pipeline.py --theme "liquid metal" --num-clips 5
+    python pipeline.py --batch 3  # Generate 3 separate videos
 
-Pipeline:
-    1. DeepSeek → script (hack ideas + narration + scene descriptions)
-    2. ElevenLabs → expressive TTS audio with word-level timestamps
-    3. FAL FLUX → 3D character images (anthropomorphic objects)
-    4. VEED Fabric / SadTalker → lip-synced talking video (image+audio → video)
-    5. FFmpeg → burn subtitles, add BGM, stitch into one short
+Pipeline (3 steps, all via existing API keys):
+    1. DeepSeek → concept (visual prompt + sound prompt)
+    2. Kling 3.0 (fal.ai) → video clip  }  run in parallel
+       ElevenLabs SFX V2 → ASMR audio   }  per concept
+    3. FFmpeg → layer sound on video, optional text overlay, stitch + BGM
 """
 import json
 import logging
 import argparse
-import shutil
 from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import config
-from scripts.generate import generate_script
-from tts.elevenlabs import generate_all_hack_audio
-from imagegen.fal_flux import generate_all_hack_images
-from videogen.lipsync import generate_all_hack_videos
+from scripts.generate import generate_concepts
+from sfx.elevenlabs_sfx import generate_all_clip_sfx
+from videogen.kling import generate_all_clip_videos
 from postprocess.effects import compose_final_video
 
 logger = logging.getLogger(__name__)
 
+# Theme ideas for variety across batches
+THEMES = [
+    "glass and crystal physics",
+    "liquid metal and mercury",
+    "impossible food transformations",
+    "magnetic and gravitational anomalies",
+    "ice and fire paradoxes",
+    "organic growth and bloom",
+    "geometric impossibilities",
+    "miniature worlds inside objects",
+    "color-shifting materials",
+    "reverse entropy and time manipulation",
+]
+
 
 def run_pipeline(
-    topic: str = "kitchen and household",
-    num_hacks: int = None,
+    theme: str = "surreal physics",
+    num_clips: int = None,
     bgm_path: str = None,
-    sfx_path: str = None,
     output_name: str = None,
 ) -> str:
     """
@@ -51,75 +62,59 @@ def run_pipeline(
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if not output_name:
-        output_name = f"lifehack_{timestamp}.mp4"
+        output_name = f"satisfying_{timestamp}.mp4"
 
     final_output = config.OUTPUT_DIR / output_name
 
-    logger.info(f"=== PIPELINE START: topic='{topic}' ===")
+    logger.info(f"=== PIPELINE START: theme='{theme}' ===")
     logger.info(f"Run directory: {run_dir}")
 
-    # ── Step 1: Generate script ──────────────────────────
-    logger.info("── Step 1/5: Generating script...")
-    hacks = generate_script(topic, num_hacks)
+    # ── Step 1: Generate concepts ─────────────────────────
+    logger.info("── Step 1/3: Generating concepts...")
+    concepts = generate_concepts(theme, num_clips)
 
-    script_file = run_dir / "script.json"
-    with open(script_file, "w") as f:
-        json.dump(hacks, f, indent=2, ensure_ascii=False)
-    logger.info(f"Script: {len(hacks)} hacks generated")
+    concepts_file = run_dir / "concepts.json"
+    with open(concepts_file, "w") as f:
+        json.dump(concepts, f, indent=2, ensure_ascii=False)
+    logger.info(f"Concepts: {len(concepts)} generated")
 
-    for h in hacks:
-        logger.info(f"  #{h['hack_number']}: {h['title']} ({h['object_character']})")
+    for c in concepts:
+        logger.info(f"  #{c['clip_number']}: {c['title']} ({c['hook_type']})")
 
-    # ── Step 2: Generate TTS audio ───────────────────────
-    logger.info("── Step 2/5: Generating TTS audio...")
-    audio_dir = run_dir / "audio"
-    tts_results = generate_all_hack_audio(hacks, audio_dir)
-
-    tts_file = run_dir / "tts_results.json"
-    with open(tts_file, "w") as f:
-        json.dump(tts_results, f, indent=2, default=str)
-
-    total_audio = sum(r["duration"] for r in tts_results)
-    logger.info(f"TTS done: {total_audio:.1f}s total audio")
-
-    # ── Step 3: Generate character images ────────────────
-    logger.info("── Step 3/5: Generating character images...")
-    images_dir = run_dir / "images"
-    image_paths = generate_all_hack_images(hacks, images_dir)
-    logger.info(f"Images done: {len(image_paths)} images")
-
-    # ── Step 4: Generate lip-synced video clips ──────────
-    # Unlike the old Hailuo approach, lip-sync takes BOTH image and audio
-    # so the video duration matches the speech exactly.
-    logger.info("── Step 4/5: Generating lip-synced video clips...")
+    # ── Step 2: Generate video + SFX in parallel ──────────
+    logger.info("── Step 2/3: Generating videos + sound effects (parallel)...")
     videos_dir = run_dir / "videos"
-    audio_paths = [r["audio_path"] for r in tts_results]
-    video_paths = generate_all_hack_videos(hacks, image_paths, audio_paths, videos_dir)
-    logger.info(f"Videos done: {len(video_paths)} lip-synced clips")
+    sfx_dir = run_dir / "sfx"
 
-    # ── Step 5: Post-process and compose ─────────────────
-    # Lip-synced videos already have audio baked in from the model,
-    # but we still overlay the original TTS for precise audio quality
-    # and add subtitles + BGM.
-    logger.info("── Step 5/5: Composing final video...")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        video_future = executor.submit(generate_all_clip_videos, concepts, videos_dir)
+        sfx_future = executor.submit(generate_all_clip_sfx, concepts, sfx_dir)
+
+        video_paths = video_future.result()
+        sfx_results = sfx_future.result()
+
+    logger.info(f"Videos done: {len(video_paths)} clips")
+    logger.info(f"SFX done: {len(sfx_results)} sounds")
+
+    # Save SFX results
+    sfx_file = run_dir / "sfx_results.json"
+    with open(sfx_file, "w") as f:
+        json.dump(sfx_results, f, indent=2, default=str)
+
+    # ── Step 3: Post-process and compose ──────────────────
+    logger.info("── Step 3/3: Composing final video...")
 
     if not bgm_path:
         bgm_candidates = list(config.BGM_DIR.glob("*.*"))
         if bgm_candidates:
             bgm_path = str(bgm_candidates[0])
 
-    if not sfx_path:
-        sfx_candidates = list(config.SFX_DIR.glob("*.*"))
-        if sfx_candidates:
-            sfx_path = str(sfx_candidates[0])
-
     result = compose_final_video(
         video_paths=video_paths,
-        tts_results=tts_results,
-        audio_paths=audio_paths,
+        sfx_results=sfx_results,
+        concepts=concepts,
         output_path=final_output,
         bgm_path=bgm_path,
-        sfx_transition_path=sfx_path,
     )
 
     logger.info(f"=== PIPELINE COMPLETE ===")
@@ -129,30 +124,60 @@ def run_pipeline(
     return result
 
 
+def run_batch(
+    num_videos: int = 3,
+    clips_per_video: int = None,
+    bgm_path: str = None,
+) -> list[str]:
+    """Generate multiple videos with different themes for batch posting."""
+    import random
+    themes = random.sample(THEMES, min(num_videos, len(THEMES)))
+    results = []
+
+    for i, theme in enumerate(themes):
+        logger.info(f"\n{'='*60}")
+        logger.info(f"BATCH {i+1}/{num_videos}: theme='{theme}'")
+        logger.info(f"{'='*60}")
+
+        result = run_pipeline(
+            theme=theme,
+            num_clips=clips_per_video,
+            bgm_path=bgm_path,
+        )
+        results.append(result)
+
+    logger.info(f"\nBatch complete! {len(results)} videos generated:")
+    for r in results:
+        logger.info(f"  → {r}")
+
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate life-hack short videos with lip-synced animated characters",
+        description="Generate 'Impossible Satisfying' short videos",
     )
     parser.add_argument(
-        "--topic",
-        default="kitchen and household",
-        help="Topic for life hacks (default: kitchen and household)",
+        "--theme",
+        default="surreal physics",
+        help="Visual theme for concepts (default: surreal physics)",
     )
     parser.add_argument(
-        "--num-hacks",
+        "--num-clips",
         type=int,
         default=None,
-        help=f"Number of hacks per video (default: {config.HACKS_PER_VIDEO})",
+        help=f"Number of clips per video (default: {config.CLIPS_PER_VIDEO})",
+    )
+    parser.add_argument(
+        "--batch",
+        type=int,
+        default=None,
+        help="Generate multiple videos with different themes",
     )
     parser.add_argument(
         "--bgm",
         default=None,
         help="Path to background music file",
-    )
-    parser.add_argument(
-        "--sfx",
-        default=None,
-        help="Path to transition SFX file",
     )
     parser.add_argument(
         "--output",
@@ -173,15 +198,23 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    result = run_pipeline(
-        topic=args.topic,
-        num_hacks=args.num_hacks,
-        bgm_path=args.bgm,
-        sfx_path=args.sfx,
-        output_name=args.output,
-    )
-
-    print(f"\nDone! Video saved to: {result}")
+    if args.batch:
+        results = run_batch(
+            num_videos=args.batch,
+            clips_per_video=args.num_clips,
+            bgm_path=args.bgm,
+        )
+        print(f"\nDone! {len(results)} videos generated.")
+        for r in results:
+            print(f"  → {r}")
+    else:
+        result = run_pipeline(
+            theme=args.theme,
+            num_clips=args.num_clips,
+            bgm_path=args.bgm,
+            output_name=args.output,
+        )
+        print(f"\nDone! Video saved to: {result}")
 
 
 if __name__ == "__main__":

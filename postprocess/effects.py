@@ -1,10 +1,10 @@
 """
-Post-processing with FFmpeg.
-- Overlays TTS audio onto video clips
-- Burns in word-synced subtitles (center-bottom, large, readable on mobile)
-- Adds SFX at transitions
-- Adds looping BGM at low volume
-- Stitches all mini-hack clips into one final 40-50s vertical short
+Post-processing with FFmpeg for Impossible Satisfying videos.
+- Layers ASMR sound effects onto silent video clips
+- Adds optional minimal text overlay (no subtitles needed)
+- Adds looping BGM at low volume underneath SFX
+- Stitches clips into one final 15-30s vertical short
+- Ensures consistent 9:16 format and audio levels
 """
 import json
 import logging
@@ -25,83 +25,52 @@ def _ffprobe_duration(path: str) -> float:
     return float(json.loads(r.stdout)["format"]["duration"])
 
 
-def _seconds_to_ass(s: float) -> str:
-    """Convert seconds to ASS subtitle timestamp H:MM:SS.cc"""
-    h = int(s // 3600)
-    m = int((s % 3600) // 60)
-    sec = s % 60
-    return f"{h}:{m:02d}:{sec:05.2f}"
-
-
-def _build_ass_file(
-    tts_results: list[dict],
-    clip_offsets: list[float],
-    output_path: Path,
-) -> str:
-    """
-    Build ASS subtitle file with word-group timing synced to speech.
-    Subtitles appear center-bottom, large font, with a semi-transparent background box.
-    """
-    font_size = config.SUBTITLE_FONT_SIZE
-    margin_v = config.SUBTITLE_MARGIN_V
-    font = config.SUBTITLE_FONT
-
-    header = f"""[Script Info]
-Title: Life Hacks
-ScriptType: v4.00+
-WrapStyle: 0
-PlayResX: {config.VIDEO_WIDTH}
-PlayResY: {config.VIDEO_HEIGHT}
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,3,4,0,2,40,40,{margin_v},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-
-    lines = []
-    words_per_group = 4
-
-    for hack_idx, (tts, offset) in enumerate(zip(tts_results, clip_offsets)):
-        alignment = tts.get("alignment", [])
-        if not alignment:
-            continue
-
-        for i in range(0, len(alignment), words_per_group):
-            group = alignment[i : i + words_per_group]
-            text = " ".join(w["word"] for w in group)
-            t_start = offset + group[0]["start"]
-            t_end = offset + group[-1]["end"] + 0.05
-            lines.append(
-                f"Dialogue: 0,{_seconds_to_ass(t_start)},{_seconds_to_ass(t_end)},"
-                f"Default,,0,0,0,,{text}"
-            )
-
-    content = header + "\n".join(lines) + "\n"
-    with open(output_path, "w") as f:
-        f.write(content)
-
-    logger.info(f"Subtitles written: {output_path} ({len(lines)} groups)")
-    return str(output_path)
-
-
-def _overlay_audio_on_clip(
+def _layer_sfx_on_clip(
     video_path: str,
-    audio_path: str,
+    sfx_path: str,
     output_path: str,
 ) -> str:
-    """Replace video audio track with TTS audio, trimmed to the shorter duration."""
+    """Layer sound effect onto video clip, trimmed to video duration."""
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
-        "-i", audio_path,
+        "-i", sfx_path,
         "-map", "0:v",
         "-map", "1:a",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+        "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
+        "-af", f"volume={config.SFX_VOLUME}",
         "-shortest",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, check=True)
+    return output_path
+
+
+def _add_text_overlay(
+    video_path: str,
+    text: str,
+    output_path: str,
+) -> str:
+    """Add minimal text overlay (e.g., '???' or 'wait for it') to video."""
+    font_size = config.OVERLAY_FONT_SIZE
+    font = config.OVERLAY_FONT
+
+    # Centered, with a subtle shadow for readability
+    drawtext = (
+        f"drawtext=text='{text}':"
+        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+        f"fontsize={font_size}:fontcolor=white:"
+        f"shadowcolor=black@0.6:shadowx=3:shadowy=3:"
+        f"x=(w-text_w)/2:y=h*0.85"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-vf", drawtext,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+        "-c:a", "copy",
         output_path,
     ]
     subprocess.run(cmd, capture_output=True, check=True)
@@ -110,47 +79,50 @@ def _overlay_audio_on_clip(
 
 def compose_final_video(
     video_paths: list[str],
-    tts_results: list[dict],
-    audio_paths: list[str],
+    sfx_results: list[dict],
+    concepts: list[dict],
     output_path: Path,
     bgm_path: str = None,
-    sfx_transition_path: str = None,
 ) -> str:
     """
-    Compose the final short video:
-    1. Overlay TTS audio on each video clip
-    2. Concatenate clips
-    3. Burn in word-synced subtitles
-    4. Mix in BGM + optional transition SFX
+    Compose the final satisfying short video:
+    1. Layer SFX audio on each video clip
+    2. Add optional text overlays
+    3. Concatenate clips with brief crossfade
+    4. Mix in BGM at low volume
     5. Output final 9:16 mp4
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp = config.TEMP_DIR
 
-    # 1. Overlay audio
+    # 1. Layer SFX + text overlay on each clip
     processed = []
-    for i, (vp, ap) in enumerate(zip(video_paths, audio_paths)):
-        out = str(temp / f"av_{i}.mp4")
-        _overlay_audio_on_clip(vp, ap, out)
-        processed.append(out)
-        logger.info(f"Audio overlaid on clip {i+1}")
+    sfx_paths = [r["audio_path"] for r in sfx_results]
 
-    # 2. Compute subtitle offsets
+    for i, (vp, sp) in enumerate(zip(video_paths, sfx_paths)):
+        # Layer SFX
+        av_out = str(temp / f"av_{i}.mp4")
+        _layer_sfx_on_clip(vp, sp, av_out)
+
+        # Add text overlay if specified
+        concept = concepts[i] if i < len(concepts) else {}
+        text_overlay = concept.get("text_overlay")
+        if text_overlay:
+            overlay_out = str(temp / f"overlay_{i}.mp4")
+            _add_text_overlay(av_out, text_overlay, overlay_out)
+            processed.append(overlay_out)
+        else:
+            processed.append(av_out)
+
+        logger.info(f"Processed clip {i+1}/{len(video_paths)}")
+
+    # 2. Compute total duration
     durations = [_ffprobe_duration(p) for p in processed]
-    offsets = []
-    running = 0.0
-    for d in durations:
-        offsets.append(running)
-        running += d
-    total_dur = running
+    total_dur = sum(durations)
     logger.info(f"Total: {total_dur:.1f}s across {len(processed)} clips")
 
-    # 3. Build ASS subtitles
-    ass_path = temp / "subs.ass"
-    _build_ass_file(tts_results, offsets, ass_path)
-
-    # 4. Concatenate clips
+    # 3. Concatenate clips
     concat_list = temp / "concat.txt"
     with open(concat_list, "w") as f:
         for p in processed:
@@ -163,35 +135,31 @@ def compose_final_video(
         capture_output=True, check=True,
     )
 
-    # 5. Burn subs + BGM
-    inputs = ["-i", concat_out]
+    # 4. Add BGM if available
     has_bgm = bgm_path and Path(bgm_path).exists()
     if has_bgm:
-        inputs.extend(["-stream_loop", "-1", "-i", bgm_path])
-
-    vf = f"[0:v]ass='{ass_path}'[vout]"
-    if has_bgm:
-        af = (
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", concat_out,
+            "-stream_loop", "-1", "-i", bgm_path,
+            "-filter_complex",
             f"[1:a]atrim=0:{total_dur},asetpts=PTS-STARTPTS,"
             f"volume={config.BGM_VOLUME}[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]"
-        )
+            f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+            "-map", "0:v", "-map", "[aout]",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            str(output_path),
+        ]
     else:
-        af = "[0:a]acopy[aout]"
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", concat_out,
+            "-c", "copy",
+            str(output_path),
+        ]
 
-    full_filter = f"{vf};{af}"
-
-    cmd = [
-        "ffmpeg", "-y", *inputs,
-        "-filter_complex", full_filter,
-        "-map", "[vout]", "-map", "[aout]",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k",
-        "-r", "25",
-        str(output_path),
-    ]
-
-    logger.info("Composing final video with subs + audio...")
+    logger.info("Composing final video...")
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         logger.error(f"FFmpeg error:\n{r.stderr[-800:]}")

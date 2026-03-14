@@ -1,6 +1,6 @@
 """
-Configuration for Life-Hack Short Video Generator.
-APIs: DeepSeek (LLM) / ElevenLabs (TTS) / FAL (image+video)
+Configuration for Impossible Satisfying Video Generator.
+APIs: DeepSeek (concept) / ElevenLabs (SFX) / FAL + Kling (video)
 """
 import os
 from pathlib import Path
@@ -21,47 +21,36 @@ SFX_DIR = ASSETS_DIR / "sfx"
 OUTPUT_DIR = BASE_DIR / "output"
 TEMP_DIR = OUTPUT_DIR / "temp"
 DATA_DIR = BASE_DIR / "data"
-USED_HACKS_FILE = DATA_DIR / "used_hacks.json"
+USED_CONCEPTS_FILE = DATA_DIR / "used_concepts.json"
 
 for d in [OUTPUT_DIR, TEMP_DIR, DATA_DIR, BGM_DIR, SFX_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-# ── DeepSeek LLM (script generation) ─────────────────────
+# ── DeepSeek LLM (concept generation) ────────────────────
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 SCRIPT_MAX_TOKENS = int(os.getenv("SCRIPT_MAX_TOKENS", "4096"))
-HACKS_PER_VIDEO = int(os.getenv("HACKS_PER_VIDEO", "3"))
+CLIPS_PER_VIDEO = int(os.getenv("CLIPS_PER_VIDEO", "3"))
 
-# ── ElevenLabs TTS ───────────────────────────────────────
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
-ELEVENLABS_VOICE_ID_FEMALE = os.getenv("ELEVENLABS_VOICE_ID_FEMALE", "")
-ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
-# Lower stability = more expressive/varied. 0.15 gives punchy, dynamic delivery.
-TTS_STABILITY = float(os.getenv("TTS_STABILITY", "0.15"))
-TTS_SIMILARITY_BOOST = float(os.getenv("TTS_SIMILARITY_BOOST", "0.90"))
-# Max style exaggeration for high-energy, comedic delivery
-TTS_STYLE = float(os.getenv("TTS_STYLE", "1.0"))
-TTS_USE_SPEAKER_BOOST = True
+# ── ElevenLabs Sound Effects ─────────────────────────────
+# Uses the Sound Effects V2 API (text → ASMR/satisfying sounds)
+ELEVENLABS_SFX_MODEL = os.getenv("ELEVENLABS_SFX_MODEL", "eleven_sfx_v2")
+SFX_DURATION_SECONDS = float(os.getenv("SFX_DURATION_SECONDS", "10.0"))
+SFX_PROMPT_INFLUENCE = float(os.getenv("SFX_PROMPT_INFLUENCE", "0.7"))
 
-# ── FAL (image generation - FLUX) ────────────────────────
-FAL_IMAGE_MODEL = os.getenv("FAL_IMAGE_MODEL", "fal-ai/flux-pro/v1.1")
-IMAGE_SIZE = "portrait_16_9"  # 9:16 vertical
-
-# ── FAL (lip-sync video generation) ───────────────────────
-# Primary: VEED Fabric 1.0 — phoneme-driven mouth animation, works with any image
-LIPSYNC_MODEL_PRIMARY = os.getenv("LIPSYNC_MODEL_PRIMARY", "veed/fabric-1.0")
-LIPSYNC_RESOLUTION = os.getenv("LIPSYNC_RESOLUTION", "720p")
-# Fallback: SadTalker — 3D motion coefficient lip sync
-LIPSYNC_MODEL_FALLBACK = os.getenv("LIPSYNC_MODEL_FALLBACK", "fal-ai/sadtalker")
-SADTALKER_FACE_RESOLUTION = os.getenv("SADTALKER_FACE_RESOLUTION", "512")
-SADTALKER_EXPRESSION_SCALE = float(os.getenv("SADTALKER_EXPRESSION_SCALE", "1.5"))
-SADTALKER_PREPROCESS = os.getenv("SADTALKER_PREPROCESS", "full")
+# ── FAL / Kling 3.0 (video generation) ───────────────────
+# Kling 3.0 via fal.ai — best physics simulation for satisfying content
+FAL_VIDEO_MODEL = os.getenv("FAL_VIDEO_MODEL", "fal-ai/kling-video/v2/master/text-to-video")
+VIDEO_DURATION = os.getenv("VIDEO_DURATION", "5")  # seconds per clip
+VIDEO_ASPECT_RATIO = os.getenv("VIDEO_ASPECT_RATIO", "9:16")  # vertical
+# Fallback: Wan 2.1 (open-source, good quality, cheaper)
+FAL_VIDEO_MODEL_FALLBACK = os.getenv("FAL_VIDEO_MODEL_FALLBACK", "fal-ai/wan/v2.1/1.3b/text-to-video")
 
 # ── Post-processing (FFmpeg) ─────────────────────────────
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
-SUBTITLE_FONT_SIZE = int(os.getenv("SUBTITLE_FONT_SIZE", "58"))
-SUBTITLE_FONT = os.getenv("SUBTITLE_FONT", "Arial")
-SUBTITLE_MARGIN_V = int(os.getenv("SUBTITLE_MARGIN_V", "160"))
-BGM_VOLUME = float(os.getenv("BGM_VOLUME", "0.12"))
-SFX_VOLUME = float(os.getenv("SFX_VOLUME", "0.6"))
+# Minimal text overlay (no subtitles needed — visual-only content)
+OVERLAY_FONT_SIZE = int(os.getenv("OVERLAY_FONT_SIZE", "72"))
+OVERLAY_FONT = os.getenv("OVERLAY_FONT", "Arial")
+BGM_VOLUME = float(os.getenv("BGM_VOLUME", "0.10"))
+SFX_VOLUME = float(os.getenv("SFX_VOLUME", "0.85"))
