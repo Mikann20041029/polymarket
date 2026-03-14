@@ -15,8 +15,10 @@ on:
         description: "Number of separate videos to generate (1-5)"
         required: false
         default: "1"
-  schedule:
-    - cron: "0 */12 * * *"
+  # DISABLED: Do not auto-run until monetization is live.
+  # Uncomment the schedule below only after the channel is validated and earning.
+  # schedule:
+  #   - cron: "0 */12 * * *"
 
 jobs:
   generate:

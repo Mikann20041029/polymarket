@@ -40,7 +40,8 @@ SFX_PROMPT_INFLUENCE = float(os.getenv("SFX_PROMPT_INFLUENCE", "0.7"))
 
 # ── FAL / Kling 3.0 (video generation) ───────────────────
 # Kling 3.0 via fal.ai — best physics simulation for satisfying content
-FAL_VIDEO_MODEL = os.getenv("FAL_VIDEO_MODEL", "fal-ai/kling-video/v2/master/text-to-video")
+# Default: Wan 2.1 (cheapest, ~$0.10/clip). Set to kling endpoint only when validated.
+FAL_VIDEO_MODEL = os.getenv("FAL_VIDEO_MODEL", "fal-ai/wan/v2.1/1.3b/text-to-video")
 VIDEO_DURATION = os.getenv("VIDEO_DURATION", "5")  # seconds per clip
 VIDEO_ASPECT_RATIO = os.getenv("VIDEO_ASPECT_RATIO", "9:16")  # vertical
 # Fallback: Wan 2.1 (open-source, good quality, cheaper)
