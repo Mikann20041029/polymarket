@@ -1,10 +1,12 @@
 """
 Image generation using FAL FLUX API.
 Generates 3D Pixar-style anthropomorphic object character images.
+Supports parallel generation for multiple hacks.
 """
 import os
 import logging
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import requests
 import fal_client
@@ -13,16 +15,19 @@ import config
 logger = logging.getLogger(__name__)
 
 CHARACTER_STYLE = (
-    "High-quality stylized 3D animated character render, "
-    "Pixar/Disney movie quality, cute anthropomorphic object, "
-    "the object has a LARGE face taking up most of the frame, "
-    "big expressive eyes with thick eyebrows and a wide open mouth showing teeth, "
-    "the face is clearly visible and front-facing for lip-sync animation, "
-    "exactly two small stubby arms with hands attached to its body, "
-    "warm indoor kitchen lighting, shallow depth of field, "
-    "close-up portrait shot, clean solid-color background, "
-    "vertical 9:16 portrait framing, face centered and large in frame, "
-    "family-friendly, toy-like feel, professional 3D animation quality"
+    "Ultra-high-quality Pixar movie screenshot, professional 3D CGI render, "
+    "ray-traced global illumination, subsurface scattering on materials, "
+    "cute anthropomorphic object character with Disney-Pixar level detail, "
+    "the object has a face with huge glossy expressive eyes with specular highlights, "
+    "thick animated eyebrows, wide elastic mouth showing emotion, "
+    "small stubby arms with mitten-like hands attached to its body, "
+    "the character has a polished toy-like material finish with subtle reflections, "
+    "warm cinematic indoor lighting with volumetric light rays, "
+    "extremely shallow depth of field with beautiful bokeh, "
+    "clean soft-gradient background, professional film color grading, "
+    "vertical 9:16 portrait framing, character fills 70% of frame, "
+    "looks like an actual frame from a Pixar feature film, "
+    "family-friendly, masterpiece quality, 8K detail"
 )
 
 
@@ -47,19 +52,18 @@ def generate_character_image(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     prompt = (
-        f"Close-up portrait of a cute anthropomorphic {object_name} character, "
-        f"the {object_name} has a large cartoon face filling most of the frame, "
-        f"big expressive eyes and a wide open mouth, front-facing camera, "
-        f"exactly two small stubby arms, "
+        f"Pixar movie screenshot: a lovable anthropomorphic {object_name} character, "
+        f"the {object_name} is alive with a cartoon face — huge shiny eyes, expressive eyebrows, elastic wide mouth, "
+        f"tiny stubby arms with mitten hands, standing upright with personality, "
         f"{scene_description}. "
         f"{CHARACTER_STYLE}"
     )
 
     negative_prompt = (
-        "realistic photo, ugly, deformed, blurry, low quality, text, watermark, "
-        "2D flat illustration, human, person, anime style, dark, scary, "
-        "multiple characters, split screen, extra arms, extra limbs, "
-        "multiple arms, many arms, extra hands, deformed hands"
+        "realistic photo, photograph, ugly, deformed, disfigured, blurry, low quality, "
+        "text, watermark, logo, 2D, flat illustration, hand-drawn, sketch, "
+        "human, person, anime style, dark, horror, scary, grotesque, "
+        "multiple characters, split screen, collage, border, frame"
     )
 
     logger.info(f"Generating image: {object_name} — '{scene_description[:50]}...'")
@@ -89,21 +93,29 @@ def generate_character_image(
 
 
 def generate_all_hack_images(hacks: list[dict], output_dir: Path) -> list[str]:
-    """Generate character images for all hacks."""
+    """Generate character images for all hacks IN PARALLEL."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
 
-    for i, hack in enumerate(hacks):
+    def _gen_one(i: int, hack: dict) -> tuple[int, str]:
         out = output_dir / f"hack_{i+1}.png"
         path = generate_character_image(
             object_name=hack["object_character"],
             scene_description=hack["scene_description"],
             output_path=out,
         )
-        paths.append(path)
         logger.info(f"Image {i+1}/{len(hacks)} done")
+        return (i, path)
 
+    # Run all image generations in parallel
+    paths = [None] * len(hacks)
+    with ThreadPoolExecutor(max_workers=len(hacks)) as executor:
+        futures = {executor.submit(_gen_one, i, h): i for i, h in enumerate(hacks)}
+        for future in as_completed(futures):
+            idx, path = future.result()
+            paths[idx] = path
+
+    logger.info(f"All {len(hacks)} images generated in parallel")
     return paths
 
 

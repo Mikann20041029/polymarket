@@ -5,6 +5,7 @@ visually mesmerizing scenes with matching ASMR sound descriptions.
 No language needed. Pure visual + audio satisfaction.
 """
 import json
+import re
 import logging
 import argparse
 from pathlib import Path
@@ -39,7 +40,7 @@ WINNING CONCEPTS (examples of what works):
 - A soap bubble expands and inside it contains a tiny ocean with waves
 - Honeycomb drips upward, each drop becoming a golden butterfly
 
-OUTPUT FORMAT: Return ONLY a valid JSON array. No markdown, no explanation."""
+OUTPUT FORMAT: Return a JSON object with a single key "concepts" containing the array. No markdown."""
 
 CONCEPT_TEMPLATE = """Generate {num_clips} unique "Impossible Satisfying" video concepts.
 
@@ -49,7 +50,7 @@ PREVIOUSLY USED CONCEPTS (DO NOT REPEAT):
 {used_concepts}
 
 For each concept, output this JSON structure:
-[
+{{"concepts": [
   {{
     "clip_number": 1,
     "title": "Short catchy title (2-4 words, no language needed in video)",
@@ -60,7 +61,7 @@ For each concept, output this JSON structure:
     "color_palette": "2-3 dominant colors for visual consistency (e.g., 'amber, deep blue, gold')",
     "loop_friendly": true or false — whether the end can seamlessly connect to the beginning
   }}
-]
+]}}
 
 Make each concept visually DISTINCT. Vary the materials (glass, metal, liquid, organic, crystal, fabric),
 the impossible physics (reverse gravity, impossible geometry, material transformation, scale shift),
@@ -114,6 +115,7 @@ def generate_concepts(
         model=model,
         max_tokens=config.SCRIPT_MAX_TOKENS,
         temperature=0.95,
+        response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
@@ -121,13 +123,43 @@ def generate_concepts(
     )
 
     raw = resp.choices[0].message.content.strip()
-    # Strip markdown code fences
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1]
-    if raw.endswith("```"):
-        raw = raw[:-3].rstrip()
+    logger.debug(f"Raw LLM response (first 300 chars): {raw[:300]}")
 
-    concepts = json.loads(raw)
+    # Robust JSON extraction — handles markdown fences and various formats
+    match = re.search(r'\[[\s\S]*\]', raw)
+    if match:
+        json_str = match.group(0)
+    else:
+        json_str = raw
+        if "```" in json_str:
+            parts = json_str.split("```")
+            if len(parts) >= 3:
+                json_str = parts[1]
+            elif len(parts) >= 2:
+                json_str = parts[1]
+            if json_str.startswith("json"):
+                json_str = json_str[4:]
+            json_str = json_str.strip()
+
+    try:
+        parsed = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse failed: {e}")
+        logger.error(f"Attempted to parse: {json_str[:500]}")
+        raise ValueError(f"DeepSeek returned invalid JSON: {e}") from e
+
+    # Handle both {"concepts": [...]} and [...] formats
+    if isinstance(parsed, dict) and "concepts" in parsed:
+        concepts = parsed["concepts"]
+    elif isinstance(parsed, list):
+        concepts = parsed
+    else:
+        for v in parsed.values():
+            if isinstance(v, list):
+                concepts = v
+                break
+        else:
+            raise ValueError(f"Unexpected JSON structure: {list(parsed.keys()) if isinstance(parsed, dict) else type(parsed)}")
 
     # Update de-duplication list
     new_titles = [c["title"] for c in concepts]

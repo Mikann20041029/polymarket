@@ -19,6 +19,7 @@ Pipeline (3 steps, all via existing API keys):
 import json
 import logging
 import argparse
+import time
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -46,6 +47,13 @@ THEMES = [
 ]
 
 
+def _log_timing(step_name: str, start: float) -> float:
+    """Log how long a step took and return current time."""
+    elapsed = time.time() - start
+    logger.info(f"  ⏱ {step_name}: {elapsed:.1f}s")
+    return time.time()
+
+
 def run_pipeline(
     theme: str = "surreal physics",
     num_clips: int = None,
@@ -57,6 +65,7 @@ def run_pipeline(
 
     Returns path to the final output video.
     """
+    pipeline_start = time.time()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = config.OUTPUT_DIR / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +78,8 @@ def run_pipeline(
     logger.info(f"=== PIPELINE START: theme='{theme}' ===")
     logger.info(f"Run directory: {run_dir}")
 
+    step_time = time.time()
+
     # ── Step 1: Generate concepts ─────────────────────────
     logger.info("── Step 1/3: Generating concepts...")
     concepts = generate_concepts(theme, num_clips)
@@ -80,6 +91,8 @@ def run_pipeline(
 
     for c in concepts:
         logger.info(f"  #{c['clip_number']}: {c['title']} ({c['hook_type']})")
+
+    step_time = _log_timing("Concept generation", step_time)
 
     # ── Step 2: Generate video + SFX in parallel ──────────
     logger.info("── Step 2/3: Generating videos + sound effects (parallel)...")
@@ -101,6 +114,8 @@ def run_pipeline(
     with open(sfx_file, "w") as f:
         json.dump(sfx_results, f, indent=2, default=str)
 
+    step_time = _log_timing("Video + SFX generation (parallel)", step_time)
+
     # ── Step 3: Post-process and compose ──────────────────
     logger.info("── Step 3/3: Composing final video...")
 
@@ -117,7 +132,10 @@ def run_pipeline(
         bgm_path=bgm_path,
     )
 
-    logger.info(f"=== PIPELINE COMPLETE ===")
+    _log_timing("Post-processing", step_time)
+
+    total_elapsed = time.time() - pipeline_start
+    logger.info(f"=== PIPELINE COMPLETE in {total_elapsed:.1f}s ({total_elapsed/60:.1f}min) ===")
     logger.info(f"Final video: {result}")
     logger.info(f"Run data saved in: {run_dir}")
 

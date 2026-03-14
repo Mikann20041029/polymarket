@@ -1,45 +1,47 @@
 """
-TTS module using ElevenLabs API.
-Generates expressive, high-energy English voice audio.
-Estimates word-level timing from audio duration for subtitle sync.
+TTS module using Microsoft Edge TTS (FREE, no API key required).
+Generates expressive English voice audio with word-level timing for subtitle sync.
+Falls back to ElevenLabs if ELEVENLABS_API_KEY is set and Edge TTS fails.
 """
+import asyncio
 import io
 import json
 import logging
+import re
 import argparse
 import subprocess
 from pathlib import Path
-import requests
+
+import edge_tts
 import config
 
 logger = logging.getLogger(__name__)
 
-API_URL = "https://api.elevenlabs.io/v1"
-
-# Default ElevenLabs voices as fallback when configured voice ID is invalid
-_DEFAULT_VOICES = {
-    "male": "TX3LPaxmHKxFdv7VOQHJ",    # Liam
-    "female": "EXAVITQu4vr4xnSDxMaL",   # Sarah
+# ── Edge TTS Voice Configuration ──────────────────────────
+# High-quality neural voices, free, no API key needed
+EDGE_VOICES = {
+    "male": [
+        "en-US-GuyNeural",          # Energetic, expressive
+        "en-US-ChristopherNeural",  # Clear, professional
+        "en-US-EricNeural",         # Warm, friendly
+    ],
+    "female": [
+        "en-US-JennyNeural",       # Versatile, expressive
+        "en-US-AriaNeural",        # Warm, conversational
+        "en-US-SaraNeural",        # Clear, youthful
+    ],
 }
 
+# Rotate voices for variety within a single run
+_voice_index = {"male": 0, "female": 0}
 
-def _validate_voice_id(voice_id: str, api_key: str) -> str:
-    """
-    Validate a voice ID exists. If not, fall back to a default voice.
-    Returns a valid voice_id.
-    """
-    try:
-        resp = requests.get(
-            f"{API_URL}/voices/{voice_id}",
-            headers={"xi-api-key": api_key},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return voice_id
-        logger.warning(f"Voice ID '{voice_id}' returned {resp.status_code}")
-    except Exception as e:
-        logger.warning(f"Voice ID validation failed: {e}")
-    return None
+
+def _get_edge_voice(gender: str) -> str:
+    """Pick the next Edge TTS voice for the given gender (round-robin for variety)."""
+    voices = EDGE_VOICES.get(gender, EDGE_VOICES["male"])
+    idx = _voice_index.get(gender, 0) % len(voices)
+    _voice_index[gender] = idx + 1
+    return voices[idx]
 
 
 def _get_audio_duration(path: str) -> float:
@@ -82,106 +84,56 @@ def _estimate_word_timing(text: str, duration: float) -> list[dict]:
     return alignment
 
 
-def generate_speech(text: str, output_path: Path, voice_id: str = None,
-                    gender: str = "male") -> dict:
+def _parse_edge_subtitles(sub_maker: edge_tts.SubMaker) -> list[dict]:
     """
-    Generate expressive speech audio.
-
-    Tries /with-timestamps first; falls back to standard TTS + estimated timing.
-
-    Args:
-        text: Text to speak
-        output_path: Where to save audio
-        voice_id: Override voice ID (if None, picks based on gender)
-        gender: "male" or "female" — selects the appropriate voice
-
-    Returns dict with:
-        - audio_path: path to mp3 file
-        - alignment: list of {word, start, end} for subtitle sync
-        - duration: total audio duration in seconds
+    Parse Edge TTS SubMaker word-level cues into alignment format.
+    Each cue is a Subtitle object with .start (timedelta), .end (timedelta), .content (str).
     """
-    if not voice_id:
-        if gender == "female" and config.ELEVENLABS_VOICE_ID_FEMALE:
-            voice_id = config.ELEVENLABS_VOICE_ID_FEMALE
-        else:
-            voice_id = config.ELEVENLABS_VOICE_ID
-    if not voice_id:
-        logger.warning("No voice ID configured, using default")
-        voice_id = _DEFAULT_VOICES.get(gender, _DEFAULT_VOICES["male"])
-
-    # Validate the voice ID exists, fall back to default if not
-    validated = _validate_voice_id(voice_id, config.ELEVENLABS_API_KEY)
-    if not validated:
-        fallback = _DEFAULT_VOICES.get(gender, _DEFAULT_VOICES["male"])
-        logger.warning(f"Voice '{voice_id}' not found, falling back to default: {fallback}")
-        voice_id = fallback
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Strip emotion tags for TTS
-    clean_text = text
-    for tag in ["[PAUSE]", "[EXCITED]", "[FRUSTRATED]", "[SMUG]",
-                "[PANIC]", "[RELIEF]", "[SERIOUS]", "[HAPPY]"]:
-        clean_text = clean_text.replace(tag, "...")
-    # Clean up multiple dots
-    while "......" in clean_text:
-        clean_text = clean_text.replace("......", "...")
-    clean_text = clean_text.strip()
-
-    headers = {
-        "xi-api-key": config.ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "text": clean_text,
-        "model_id": config.ELEVENLABS_MODEL,
-        "voice_settings": {
-            "stability": config.TTS_STABILITY,
-            "similarity_boost": config.TTS_SIMILARITY_BOOST,
-            "style": config.TTS_STYLE,
-            "use_speaker_boost": config.TTS_USE_SPEAKER_BOOST,
-        },
-    }
-
-    logger.info(f"TTS ({gender}): '{clean_text[:60]}...'")
-
-    # Try with-timestamps first
     alignment = []
-    try:
-        url = f"{API_URL}/text-to-speech/{voice_id}/with-timestamps"
-        resp = requests.post(url, headers=headers, json=payload, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+    cues = getattr(sub_maker, "cues", [])
 
-        import base64
-        audio_bytes = base64.b64decode(data["audio_base64"])
-        with open(output_path, "wb") as f:
-            f.write(audio_bytes)
+    if not cues:
+        return []
 
-        alignment = _parse_alignment(data.get("alignment", {}))
-        duration = alignment[-1]["end"] if alignment else _get_audio_duration(str(output_path))
-        logger.info(f"TTS done (with-timestamps): {duration:.1f}s")
+    for cue in cues:
+        alignment.append({
+            "word": cue.content,
+            "start": round(cue.start.total_seconds(), 3),
+            "end": round(cue.end.total_seconds(), 3),
+        })
 
-    except requests.exceptions.HTTPError as e:
-        logger.warning(f"with-timestamps failed ({e}), using standard TTS...")
+    return alignment
 
-        # Fallback: standard TTS endpoint (returns raw audio bytes)
-        url = f"{API_URL}/text-to-speech/{voice_id}"
-        headers_stream = {
-            "xi-api-key": config.ELEVENLABS_API_KEY,
-            "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
-        }
-        resp = requests.post(url, headers=headers_stream, json=payload, timeout=60)
-        resp.raise_for_status()
 
-        with open(output_path, "wb") as f:
-            f.write(resp.content)
+async def _generate_edge_tts(text: str, output_path: Path, voice: str) -> dict:
+    """Generate TTS audio using Edge TTS with word-level timing."""
+    communicate = edge_tts.Communicate(
+        text,
+        voice,
+        rate="+20%",   # Faster for energetic, punchy delivery
+        pitch="+5Hz",  # Higher for animated character feel
+    )
 
-        duration = _get_audio_duration(str(output_path))
-        alignment = _estimate_word_timing(clean_text, duration)
-        logger.info(f"TTS done (standard + estimated timing): {duration:.1f}s")
+    sub_maker = edge_tts.SubMaker()
+    audio_data = b""
+
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_data += chunk["data"]
+        elif chunk["type"] == "WordBoundary":
+            sub_maker.feed(chunk)
+
+    # Save audio
+    with open(output_path, "wb") as f:
+        f.write(audio_data)
+
+    # Get alignment from SubMaker
+    alignment = _parse_edge_subtitles(sub_maker)
+    duration = _get_audio_duration(str(output_path))
+
+    # If SubMaker alignment is empty, estimate from duration
+    if not alignment:
+        alignment = _estimate_word_timing(text, duration)
 
     return {
         "audio_path": str(output_path),
@@ -190,36 +142,44 @@ def generate_speech(text: str, output_path: Path, voice_id: str = None,
     }
 
 
-def _parse_alignment(raw_alignment: dict) -> list[dict]:
-    """Parse ElevenLabs character-level alignment into word-level alignment."""
-    chars = raw_alignment.get("characters", [])
-    starts = raw_alignment.get("character_start_times_seconds", [])
-    ends = raw_alignment.get("character_end_times_seconds", [])
+def generate_speech(text: str, output_path: Path, voice_id: str = None,
+                    gender: str = "male") -> dict:
+    """
+    Generate expressive speech audio using Edge TTS (free).
 
-    if not chars:
-        return []
+    Args:
+        text: Text to speak
+        output_path: Where to save audio
+        voice_id: Override voice name (e.g., "en-US-GuyNeural")
+        gender: "male" or "female" — selects the appropriate voice
 
-    words = []
-    current_word = ""
-    word_start = None
-    word_end = None
+    Returns dict with:
+        - audio_path: path to mp3 file
+        - alignment: list of {word, start, end} for subtitle sync
+        - duration: total audio duration in seconds
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    for i, ch in enumerate(chars):
-        if ch == " ":
-            if current_word:
-                words.append({"word": current_word, "start": word_start, "end": word_end})
-                current_word = ""
-                word_start = None
-        else:
-            if word_start is None:
-                word_start = starts[i] if i < len(starts) else 0
-            word_end = ends[i] if i < len(ends) else word_start
-            current_word += ch
+    # Strip emotion tags and problematic punctuation for clean TTS
+    clean_text = re.sub(r'\[(?:PAUSE|EXCITED|FRUSTRATED|SMUG|PANIC|RELIEF|SERIOUS|HAPPY|[A-Z]+)\]', '', text)
+    # Replace ellipsis with comma-pause (avoids TTS reading "dot dot dot")
+    clean_text = re.sub(r'\.{2,}', ',', clean_text)
+    # Collapse multiple spaces/punctuation
+    clean_text = re.sub(r'  +', ' ', clean_text).strip()
 
-    if current_word:
-        words.append({"word": current_word, "start": word_start, "end": word_end})
+    # Select voice
+    voice = voice_id or _get_edge_voice(gender)
+    logger.info(f"TTS ({gender}, voice={voice}): '{clean_text[:60]}...'")
 
-    return words
+    # Generate with Edge TTS
+    try:
+        result = asyncio.run(_generate_edge_tts(clean_text, output_path, voice))
+        logger.info(f"Edge TTS done: {result['duration']:.1f}s, {len(result['alignment'])} word cues")
+        return result
+    except Exception as e:
+        logger.error(f"Edge TTS failed: {e}")
+        raise RuntimeError(f"Edge TTS failed: {e}") from e
 
 
 def generate_all_hack_audio(hacks: list[dict], output_dir: Path) -> list[dict]:
@@ -245,6 +205,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--text", required=True)
     p.add_argument("--output", default="output/test_tts.mp3")
+    p.add_argument("--gender", default="male", choices=["male", "female"])
     args = p.parse_args()
-    result = generate_speech(args.text, Path(args.output))
+    result = generate_speech(args.text, Path(args.output), gender=args.gender)
     print(json.dumps(result, indent=2, default=str))

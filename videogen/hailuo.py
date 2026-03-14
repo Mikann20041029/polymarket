@@ -2,10 +2,12 @@
 Video generation using FAL Hailuo 2.3 Fast API.
 Converts static character images into animated video clips with
 expressive body movement, facial animation, and hand gestures.
+Supports parallel generation for multiple hacks.
 """
 import os
 import logging
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import requests
 import fal_client
@@ -81,18 +83,29 @@ def generate_all_hack_videos(
     image_paths: list[str],
     output_dir: Path,
 ) -> list[str]:
-    """Generate video clips for all hacks."""
+    """Generate video clips for all hacks IN PARALLEL."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
 
-    for i, (hack, img) in enumerate(zip(hacks, image_paths)):
+    def _gen_one(i: int, hack: dict, img: str) -> tuple[int, str]:
         out = output_dir / f"hack_{i+1}.mp4"
         motion = hack.get("motion_prompt", "character talking and gesturing energetically")
         path = generate_video_clip(img, motion, out)
-        paths.append(path)
         logger.info(f"Video {i+1}/{len(hacks)} done")
+        return (i, path)
 
+    # Run all video generations in parallel
+    paths = [None] * len(hacks)
+    with ThreadPoolExecutor(max_workers=len(hacks)) as executor:
+        futures = {
+            executor.submit(_gen_one, i, hack, img): i
+            for i, (hack, img) in enumerate(zip(hacks, image_paths))
+        }
+        for future in as_completed(futures):
+            idx, path = future.result()
+            paths[idx] = path
+
+    logger.info(f"All {len(hacks)} videos generated in parallel")
     return paths
 
 

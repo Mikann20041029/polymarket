@@ -1,0 +1,12 @@
+.env
+output/
+__pycache__/
+*.pyc
+*.mp3
+*.mp4
+*.wav
+*.png
+*.jpg
+!assets/**/*.png
+!assets/**/*.jpg
+data/used_hacks.json
