@@ -3,6 +3,7 @@ Sound effects generation using ElevenLabs Sound Effects V2 API.
 Generates ASMR/satisfying sounds from text descriptions.
 No voice, no narration — pure sound design for satisfying videos.
 """
+import time
 import logging
 import argparse
 from pathlib import Path
@@ -12,6 +13,7 @@ import config
 logger = logging.getLogger(__name__)
 
 API_URL = "https://api.elevenlabs.io/v1/sound-generation"
+MAX_RETRIES = 3
 
 
 def generate_sfx(
@@ -22,19 +24,7 @@ def generate_sfx(
 ) -> dict:
     """
     Generate a satisfying sound effect from a text description.
-
-    Args:
-        prompt: Detailed description of the sound (e.g., "crisp glass shattering
-                into tiny shards, each piece producing a delicate tinkling chime,
-                subtle reverb, ASMR quality")
-        output_path: Where to save the audio file
-        duration: Duration in seconds (0.5-30). None = auto.
-        loop: Whether to create a seamlessly looping sound.
-
-    Returns dict with:
-        - audio_path: path to generated audio
-        - duration: requested duration
-        - prompt: the prompt used
+    Retries up to 3 times on transient failures.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,24 +44,49 @@ def generate_sfx(
 
     logger.info(f"Generating SFX ({duration}s): '{prompt[:80]}...'")
 
-    resp = requests.post(
-        API_URL,
-        headers=headers,
-        json=payload,
-        params={"output_format": "mp3_44100_128"},
-        timeout=120,
-    )
-    resp.raise_for_status()
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.post(
+                API_URL,
+                headers=headers,
+                json=payload,
+                params={"output_format": "mp3_44100_128"},
+                timeout=120,
+            )
 
-    with open(output_path, "wb") as f:
-        f.write(resp.content)
+            if resp.status_code == 429:
+                wait = 2 ** (attempt + 1)
+                logger.warning(f"Rate limited, waiting {wait}s...")
+                time.sleep(wait)
+                continue
 
-    logger.info(f"SFX saved: {output_path}")
-    return {
-        "audio_path": str(output_path),
-        "duration": duration,
-        "prompt": prompt,
-    }
+            if resp.status_code == 401:
+                raise RuntimeError("ElevenLabs auth failed — check ELEVENLABS_API_KEY")
+
+            resp.raise_for_status()
+
+            # Validate response is actual audio
+            if len(resp.content) < 1000:
+                raise RuntimeError(f"SFX response too small ({len(resp.content)} bytes)")
+
+            with open(output_path, "wb") as f:
+                f.write(resp.content)
+
+            logger.info(f"SFX saved: {output_path}")
+            return {
+                "audio_path": str(output_path),
+                "duration": duration,
+                "prompt": prompt,
+            }
+
+        except requests.exceptions.ConnectionError as e:
+            last_error = e
+            wait = 2 ** (attempt + 1)
+            logger.warning(f"Connection error (attempt {attempt+1}/{MAX_RETRIES}), retrying in {wait}s...")
+            time.sleep(wait)
+
+    raise RuntimeError(f"SFX generation failed after {MAX_RETRIES} attempts: {last_error}")
 
 
 def generate_all_clip_sfx(concepts: list[dict], output_dir: Path) -> list[dict]:

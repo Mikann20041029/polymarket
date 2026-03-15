@@ -14,58 +14,79 @@ import config
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a creative director for "Impossible Satisfying" — a viral TikTok/Shorts channel
-that creates surreal, physics-defying, oddly satisfying short videos using AI.
+SYSTEM_PROMPT = """You are a creative director for "Impossible Satisfying" — a viral TikTok/YouTube Shorts channel.
+Every video gets millions of views because it follows a proven formula.
 
-CHANNEL IDENTITY:
-- Every video shows something IMPOSSIBLE yet deeply SATISFYING to watch
-- Objects behave in ways that defy physics but feel visually perfect
+WHAT MAKES SATISFYING VIDEOS GO VIRAL (research-backed):
+1. HOOK IN FIRST 0.3 SECONDS — the very first frame must show something unusual/impossible mid-action
+2. CONTINUOUS ESCALATION — each moment should be more satisfying than the last, never plateau
+3. ANTICIPATION BUILDUP — show the setup, let viewers predict what happens, then exceed expectations
+4. IMPOSSIBLE PHYSICS — objects behave in ways that feel "wrong but perfect"
+5. ASMR-TRIGGERING TEXTURES — glass cracking, liquid flowing, objects clicking into place
+6. PERFECT LOOP — the ending should seamlessly restart for infinite rewatching (this 5x engagement)
+7. HIGH CONTRAST VISUALS — dark backgrounds + vivid subjects = maximum visual pop on phone screens
+8. SLOW MOTION — 0.5x to 0.25x perceived speed makes every detail satisfying
+
+CHANNEL RULES:
 - No words, no characters, no narration — pure visual + sound
-- Think: "What if physics was beautiful and wrong?"
+- Every video must trigger the "I NEED to watch that again" response
+- Dark/black backgrounds ONLY (maximizes visual contrast on phone screens)
+- Cinematic lighting (rim light, volumetric, dramatic shadows)
+- 9:16 vertical format, 5 seconds per clip
+- Family-friendly, non-violent
 
-RULES:
-- Each concept must be VISUALLY STUNNING and PHYSICALLY IMPOSSIBLE
-- The visual prompt must be extremely detailed for AI video generation (Kling 3.0)
-- The sound prompt must describe the exact ASMR/satisfying sounds to match
-- Include specific details: materials, colors, lighting, camera movement, physics behavior
-- Each concept should trigger the "wait, that's not possible..." reaction
-- Keep it family-friendly and non-violent
-- NEVER repeat the same concept type — each one must feel fresh
-
-WINNING CONCEPTS (examples of what works):
-- A watermelon sliced open reveals layers of different colored glass that shatter beautifully
-- Mercury-like liquid metal flows upward in a spiral, then freezes into a chrome flower
-- A cube of ice melts in reverse while cycling through rainbow colors
-- Magnetic sand assembles itself into a perfect miniature city
-- A soap bubble expands and inside it contains a tiny ocean with waves
-- Honeycomb drips upward, each drop becoming a golden butterfly
+WHAT FAILS (avoid these):
+- Static scenes with no motion
+- Gradual/slow reveals (viewers scroll away in 0.5s)
+- Realistic physics (boring — must be IMPOSSIBLE)
+- Busy/cluttered backgrounds
+- Low contrast or flat lighting
+- Sounds that don't match the visual (breaks immersion)
 
 OUTPUT FORMAT: Return a JSON object with a single key "concepts" containing the array. No markdown."""
 
-CONCEPT_TEMPLATE = """Generate {num_clips} unique "Impossible Satisfying" video concepts.
+CONCEPT_TEMPLATE = """Generate {num_clips} "Impossible Satisfying" video concepts for theme: {theme}
 
-Theme preference: {theme}
-
-PREVIOUSLY USED CONCEPTS (DO NOT REPEAT):
+PREVIOUSLY USED (DO NOT REPEAT ANYTHING SIMILAR):
 {used_concepts}
 
-For each concept, output this JSON structure:
+Each concept MUST follow this exact JSON structure:
 {{"concepts": [
   {{
     "clip_number": 1,
-    "title": "Short catchy title (2-4 words, no language needed in video)",
-    "visual_prompt": "Extremely detailed Kling 3.0 video generation prompt. Include: subject, materials, textures, colors, lighting (cinematic warm/cool), camera movement (slow zoom in, orbit, static close-up), the IMPOSSIBLE physics behavior, background (solid dark/gradient/minimal). 9:16 vertical format, 5 seconds. Be HYPER-SPECIFIC about motion: speed, direction, deformation, particle effects. Example quality: 'A perfect glass sphere sitting on a dark reflective surface, warm amber side lighting, slow camera push-in. The sphere suddenly fractures into hundreds of geometric shards that float upward in slow motion, each shard refracting rainbow light. Shards rotate independently and reassemble into a crystalline flower shape. Cinematic shallow depth of field, dark background, 9:16 vertical.'",
-    "sound_prompt": "Detailed ElevenLabs Sound Effects prompt describing the exact ASMR/satisfying sounds. Include: primary sound, texture, intensity, spatial quality. Example quality: 'Deep resonant glass cracking followed by delicate tinkling of floating crystal shards, subtle reverb in a large space, each shard producing a soft chime as it rotates, building to a gentle harmonic chord as they reassemble. Crisp, detailed, ASMR quality.'",
-    "text_overlay": "Optional 1-3 word text overlay for the video (or null if none needed). Use sparingly — only when it adds intrigue like '???' or 'wait for it'. Keep universal (no language-specific words).",
-    "hook_type": "What makes viewers stop scrolling: 'impossible_physics' | 'satisfying_transformation' | 'surreal_beauty' | 'unexpected_reveal' | 'perfect_loop'",
-    "color_palette": "2-3 dominant colors for visual consistency (e.g., 'amber, deep blue, gold')",
-    "loop_friendly": true or false — whether the end can seamlessly connect to the beginning
+    "title": "2-4 word catchy title",
+    "visual_prompt": "REQUIRED STRUCTURE for the AI video model prompt:
+      SUBJECT: [specific object with material/texture detail]
+      SETTING: [dark/black background, specific surface if any]
+      LIGHTING: [cinematic lighting setup — rim light, volumetric, amber/cool tones]
+      CAMERA: [specific movement — slow push-in, macro orbit, static close-up]
+      ACTION: [the IMPOSSIBLE physics behavior, described frame-by-frame]
+      PARTICLES: [secondary effects — sparkles, dust, droplets, light rays]
+      FORMAT: 9:16 vertical, 5 seconds, cinematic shallow depth of field
+
+      Write this as a SINGLE flowing paragraph, not as bullet points.
+      Be HYPER-SPECIFIC about motion direction, speed, deformation, and timing.
+      The first frame must already be mid-action (no setup time — instant hook).",
+    "sound_prompt": "Detailed sound design prompt. Structure:
+      PRIMARY: [main satisfying sound matching the visual action]
+      TEXTURE: [subtle layered sounds adding depth — creaking, tinkling, whooshing]
+      SPATIAL: [reverb/room size, stereo movement, distance]
+      QUALITY: [ASMR quality, crisp highs, satisfying bass, no harshness]
+      Write as a single flowing description.",
+    "text_overlay": "null in most cases. Only use '???', 'wait for it', or 'HOW' when truly needed",
+    "hook_type": "impossible_physics | satisfying_transformation | surreal_beauty | unexpected_reveal | perfect_loop",
+    "color_palette": "2-3 colors (use high contrast: dark bg + vivid subject)",
+    "loop_friendly": true (STRONGLY prefer true — loops get 3-5x more views)
   }}
 ]}}
 
-Make each concept visually DISTINCT. Vary the materials (glass, metal, liquid, organic, crystal, fabric),
-the impossible physics (reverse gravity, impossible geometry, material transformation, scale shift),
-and the emotional tone (peaceful, dramatic, playful, mysterious)."""
+CRITICAL QUALITY RULES:
+- visual_prompt must be 80+ words with specific physics descriptions
+- sound_prompt must be 40+ words describing layered audio
+- First frame = already in action (NO setup, NO static start)
+- Every concept must have a clear "impossible" element
+- Vary materials: glass, metal, liquid, crystal, organic, magnetic, light
+- Vary physics: reverse gravity, phase change, impossible geometry, scale shift, telekinesis"""
 
 
 def _load_used_concepts() -> list[str]:
@@ -73,14 +94,58 @@ def _load_used_concepts() -> list[str]:
     path = config.USED_CONCEPTS_FILE
     if path.exists():
         with open(path) as f:
-            return json.load(f)
+            data = json.load(f)
+        # Keep only last 200 to prevent file bloat
+        if len(data) > 200:
+            data = data[-200:]
+            _save_used_concepts(data)
+        return data
     return []
 
 
 def _save_used_concepts(used: list[str]):
     """Save updated used concept titles."""
+    config.USED_CONCEPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(config.USED_CONCEPTS_FILE, "w") as f:
         json.dump(used, f, indent=2)
+
+
+def _validate_concept(concept: dict, index: int) -> dict:
+    """
+    Validate a single concept has all required fields with sufficient detail.
+    Raises ValueError if concept would waste API money on bad generation.
+    """
+    required = ["visual_prompt", "sound_prompt", "title", "hook_type"]
+    for field in required:
+        if field not in concept or not concept[field]:
+            raise ValueError(f"Concept {index}: missing required field '{field}'")
+
+    vp = concept["visual_prompt"]
+    sp = concept["sound_prompt"]
+
+    if len(vp.split()) < 30:
+        raise ValueError(
+            f"Concept {index} '{concept['title']}': visual_prompt too short "
+            f"({len(vp.split())} words, need 30+). This will produce a bad video."
+        )
+
+    if len(sp.split()) < 15:
+        raise ValueError(
+            f"Concept {index} '{concept['title']}': sound_prompt too short "
+            f"({len(sp.split())} words, need 15+). This will produce bad audio."
+        )
+
+    # Set defaults for optional fields
+    concept.setdefault("clip_number", index + 1)
+    concept.setdefault("text_overlay", None)
+    concept.setdefault("color_palette", "white, black")
+    concept.setdefault("loop_friendly", True)
+
+    # Normalize null text_overlay
+    if concept["text_overlay"] in ("null", "none", "", "None"):
+        concept["text_overlay"] = None
+
+    return concept
 
 
 def generate_concepts(
@@ -90,10 +155,16 @@ def generate_concepts(
     """
     Generate Impossible Satisfying video concepts using DeepSeek.
 
-    Returns list of concept dicts with visual_prompt, sound_prompt, etc.
+    Returns list of validated concept dicts with visual_prompt, sound_prompt, etc.
+    Raises ValueError if concepts don't meet quality bar (prevents wasting API money).
     """
     num_clips = num_clips or config.CLIPS_PER_VIDEO
+    num_clips = max(1, min(num_clips, 10))  # Clamp to 1-10
+
     used_concepts = _load_used_concepts()
+
+    # Sanitize theme input
+    theme = re.sub(r'[^\w\s,.\-]', '', theme)[:200]
 
     client = OpenAI(
         api_key=config.DEEPSEEK_API_KEY,
@@ -102,19 +173,19 @@ def generate_concepts(
     model = config.DEEPSEEK_MODEL
     logger.info(f"Using DeepSeek API: {model}")
 
-    used_str = "\n".join(f"- {c}" for c in used_concepts[-100:]) if used_concepts else "(none yet)"
+    used_str = "\n".join(f"- {c}" for c in used_concepts[-50:]) if used_concepts else "(none yet)"
     user_msg = CONCEPT_TEMPLATE.format(
         num_clips=num_clips,
         theme=theme,
         used_concepts=used_str,
     )
 
-    logger.info(f"Generating {num_clips} concepts, theme='{theme}', {len(used_concepts)} previously used")
+    logger.info(f"Generating {num_clips} concepts, theme='{theme}'")
 
     resp = client.chat.completions.create(
         model=model,
         max_tokens=config.SCRIPT_MAX_TOKENS,
-        temperature=0.95,
+        temperature=0.8,  # Balanced: creative but coherent
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -123,51 +194,56 @@ def generate_concepts(
     )
 
     raw = resp.choices[0].message.content.strip()
-    logger.debug(f"Raw LLM response (first 300 chars): {raw[:300]}")
+    logger.debug(f"Raw LLM response (first 500 chars): {raw[:500]}")
 
-    # Robust JSON extraction — handles markdown fences and various formats
-    match = re.search(r'\[[\s\S]*\]', raw)
-    if match:
-        json_str = match.group(0)
-    else:
-        json_str = raw
-        if "```" in json_str:
-            parts = json_str.split("```")
-            if len(parts) >= 3:
-                json_str = parts[1]
-            elif len(parts) >= 2:
-                json_str = parts[1]
-            if json_str.startswith("json"):
-                json_str = json_str[4:]
-            json_str = json_str.strip()
-
+    # Robust JSON extraction
     try:
-        parsed = json.loads(json_str)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parse failed: {e}")
-        logger.error(f"Attempted to parse: {json_str[:500]}")
-        raise ValueError(f"DeepSeek returned invalid JSON: {e}") from e
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r'\{[\s\S]*\}', raw)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
 
-    # Handle both {"concepts": [...]} and [...] formats
+        if not match or not isinstance(parsed, dict):
+            match = re.search(r'\[[\s\S]*\]', raw)
+            if match:
+                parsed = json.loads(match.group(0))
+            else:
+                raise ValueError(f"DeepSeek returned unparseable response: {raw[:300]}")
+
+    # Handle {"concepts": [...]} and [...] formats
     if isinstance(parsed, dict) and "concepts" in parsed:
         concepts = parsed["concepts"]
     elif isinstance(parsed, list):
         concepts = parsed
-    else:
+    elif isinstance(parsed, dict):
         for v in parsed.values():
             if isinstance(v, list):
                 concepts = v
                 break
         else:
-            raise ValueError(f"Unexpected JSON structure: {list(parsed.keys()) if isinstance(parsed, dict) else type(parsed)}")
+            raise ValueError(f"Unexpected JSON structure: {list(parsed.keys())}")
+    else:
+        raise ValueError(f"Unexpected response type: {type(parsed)}")
 
-    # Update de-duplication list
-    new_titles = [c["title"] for c in concepts]
+    if not concepts:
+        raise ValueError("DeepSeek returned empty concepts list")
+
+    # Validate every concept BEFORE saving or returning
+    validated = []
+    for i, concept in enumerate(concepts):
+        validated.append(_validate_concept(concept, i))
+
+    # Update de-duplication list only after validation passes
+    new_titles = [c["title"] for c in validated]
     used_concepts.extend(new_titles)
     _save_used_concepts(used_concepts)
 
-    logger.info(f"Generated {len(concepts)} concepts: {new_titles}")
-    return concepts
+    logger.info(f"Generated {len(validated)} validated concepts: {new_titles}")
+    return validated
 
 
 if __name__ == "__main__":

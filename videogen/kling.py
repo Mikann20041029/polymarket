@@ -1,31 +1,36 @@
 """
-Video generation using Kling via fal.ai API.
+Video generation using Wan 2.1 / Kling via fal.ai API.
 Generates surreal, physics-defying satisfying video clips from text prompts.
-No image input needed — pure text-to-video.
 
-Includes balance checking to prevent running with insufficient funds.
+Includes:
+- Balance checking to prevent running with insufficient funds
+- Download validation to catch corrupt/empty videos
+- Parallel clip generation for speed
 """
 import os
 import logging
 import argparse
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import fal_client
 import config
 
 logger = logging.getLogger(__name__)
 
-# Cost estimates per clip (in USD) — conservative, based on fal.ai pricing
+# Cost estimates per clip (in USD) — conservative
 COST_ESTIMATES = {
-    "kling": 0.50,   # ~$0.10/sec × 5 sec
-    "wan": 0.10,     # much cheaper fallback
+    "kling": 0.50,
+    "wan": 0.10,
 }
+
+MIN_VIDEO_SIZE_BYTES = 50_000  # 50KB minimum — anything smaller is corrupt
 
 
 def check_fal_balance() -> float:
     """
     Check fal.ai account balance. Returns balance in USD.
-    Raises RuntimeError if balance is too low to generate.
+    Returns float("inf") only if balance endpoint is genuinely unavailable.
     """
     try:
         resp = requests.get(
@@ -38,11 +43,17 @@ def check_fal_balance() -> float:
             balance = data.get("balance", data.get("amount", 0))
             logger.info(f"fal.ai balance: ${balance:.2f}")
             return float(balance)
+        elif resp.status_code == 401:
+            logger.error("fal.ai auth failed — check FAL_KEY")
+            return 0.0  # Auth failed = assume no balance
         else:
-            logger.warning(f"Balance check returned {resp.status_code}, proceeding with caution")
-            return float("inf")  # Can't check, don't block
+            logger.warning(f"Balance check returned {resp.status_code}")
+            return float("inf")
+    except requests.exceptions.ConnectionError:
+        logger.warning("Could not reach fal.ai — network issue")
+        return float("inf")
     except Exception as e:
-        logger.warning(f"Could not check fal.ai balance: {e}")
+        logger.warning(f"Balance check error: {e}")
         return float("inf")
 
 
@@ -52,6 +63,23 @@ def estimate_cost(num_clips: int, model: str = "wan") -> float:
     return per_clip * num_clips
 
 
+def _validate_video(path: Path) -> bool:
+    """Check that downloaded video is valid (not empty, not HTML error page)."""
+    if not path.exists():
+        return False
+    size = path.stat().st_size
+    if size < MIN_VIDEO_SIZE_BYTES:
+        logger.error(f"Video too small ({size} bytes): {path}")
+        return False
+    # Check for HTML error pages disguised as video
+    with open(path, "rb") as f:
+        header = f.read(16)
+    if header.startswith(b"<!DOCTYPE") or header.startswith(b"<html"):
+        logger.error(f"Video is HTML error page: {path}")
+        return False
+    return True
+
+
 def generate_video_clip(
     visual_prompt: str,
     output_path: Path,
@@ -59,22 +87,15 @@ def generate_video_clip(
     """
     Generate a satisfying video clip from a text description.
 
-    Uses Wan 2.1 by default (cheapest). Kling only if FAL_VIDEO_MODEL is explicitly
-    set to a kling endpoint.
+    Uses Wan 2.1 by default (cheapest). Kling only if FAL_VIDEO_MODEL is
+    explicitly set to a kling endpoint.
 
-    Args:
-        visual_prompt: Detailed visual description for the AI video model
-        output_path: Where to save the mp4
-
-    Returns:
-        Path to generated video
+    Validates the downloaded video to prevent corrupt output.
     """
     os.environ["FAL_KEY"] = config.FAL_KEY
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Default to cheapest model (Wan 2.1) to save money
-    # Only use Kling if explicitly configured
     use_kling = "kling" in config.FAL_VIDEO_MODEL.lower()
 
     if use_kling:
@@ -86,14 +107,23 @@ def generate_video_clip(
     else:
         video_url = _generate_with_wan(visual_prompt)
 
-    # Download
-    resp = requests.get(video_url, timeout=300)
-    resp.raise_for_status()
-    with open(output_path, "wb") as f:
-        f.write(resp.content)
+    # Download with retry
+    for attempt in range(3):
+        try:
+            resp = requests.get(video_url, timeout=300)
+            resp.raise_for_status()
+            with open(output_path, "wb") as f:
+                f.write(resp.content)
 
-    logger.info(f"Video saved: {output_path}")
-    return str(output_path)
+            if _validate_video(output_path):
+                logger.info(f"Video saved: {output_path} ({output_path.stat().st_size / 1024:.0f}KB)")
+                return str(output_path)
+            else:
+                logger.warning(f"Video validation failed (attempt {attempt+1}/3)")
+        except Exception as e:
+            logger.warning(f"Download failed (attempt {attempt+1}/3): {e}")
+
+    raise RuntimeError(f"Failed to download valid video after 3 attempts: {video_url}")
 
 
 def _generate_with_kling(prompt: str) -> str:
@@ -135,17 +165,35 @@ def _generate_with_wan(prompt: str) -> str:
     return video_url
 
 
+def _generate_single_clip(args: tuple) -> tuple[int, str]:
+    """Generate a single clip (for parallel execution). Returns (index, path)."""
+    i, concept, output_dir = args
+    out = output_dir / f"clip_{i+1}.mp4"
+    path = generate_video_clip(concept["visual_prompt"], out)
+    return i, path
+
+
 def generate_all_clip_videos(concepts: list[dict], output_dir: Path) -> list[str]:
-    """Generate video clips for all concepts."""
+    """Generate video clips for all concepts in parallel."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
 
-    for i, concept in enumerate(concepts):
-        out = output_dir / f"clip_{i+1}.mp4"
-        path = generate_video_clip(concept["visual_prompt"], out)
-        paths.append(path)
-        logger.info(f"Video {i+1}/{len(concepts)} done")
+    # Parallel generation — fal.ai handles queuing server-side
+    tasks = [(i, concept, output_dir) for i, concept in enumerate(concepts)]
+    paths = [None] * len(concepts)
+
+    with ThreadPoolExecutor(max_workers=min(3, len(concepts))) as executor:
+        futures = {executor.submit(_generate_single_clip, t): t[0] for t in tasks}
+
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                i, path = future.result()
+                paths[i] = path
+                logger.info(f"Video {i+1}/{len(concepts)} done")
+            except Exception as e:
+                logger.error(f"Video {idx+1}/{len(concepts)} FAILED: {e}")
+                raise
 
     return paths
 
