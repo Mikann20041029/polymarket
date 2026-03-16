@@ -9,7 +9,6 @@ Post-processing with FFmpeg for Impossible Satisfying videos.
 """
 import json
 import logging
-import shutil
 import subprocess
 from pathlib import Path
 import config

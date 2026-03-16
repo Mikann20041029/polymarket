@@ -41,6 +41,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Validate API keys exist
+        run: |
+          test -n "${{ secrets.DEEPSEEK_API_KEY }}" || { echo "::error::Missing DEEPSEEK_API_KEY secret"; exit 1; }
+          test -n "${{ secrets.ELEVENLABS_API_KEY }}" || { echo "::error::Missing ELEVENLABS_API_KEY secret"; exit 1; }
+          test -n "${{ secrets.FAL_KEY }}" || { echo "::error::Missing FAL_KEY secret"; exit 1; }
+
       - name: Generate satisfying short video
         timeout-minutes: 25
         env:
