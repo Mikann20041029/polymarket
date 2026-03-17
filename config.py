@@ -33,11 +33,11 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 SCRIPT_MAX_TOKENS = int(os.getenv("SCRIPT_MAX_TOKENS", "4096"))
 
-# ── Wan 2.1 Video Generation via fal.ai (~$0.10/clip) ────
-FAL_VIDEO_MODEL = os.getenv("FAL_VIDEO_MODEL", "fal-ai/wan/v2.1/1.3b/text-to-video")
-WAN_RESOLUTION = os.getenv("WAN_RESOLUTION", "720p")
-VIDEO_DURATION = int(os.getenv("VIDEO_DURATION", "5"))
-WAN_NUM_FRAMES = int(os.getenv("WAN_NUM_FRAMES", str(VIDEO_DURATION * 16 + 1)))
+# ── Wan 2.1 Video Generation via fal.ai ──────────────────
+# Endpoint: fal-ai/wan-t2v
+# Pricing: 480p = $0.20/clip, 720p = $0.40/clip
+FAL_VIDEO_MODEL = os.getenv("FAL_VIDEO_MODEL", "fal-ai/wan-t2v")
+WAN_RESOLUTION = os.getenv("WAN_RESOLUTION", "480p")
 CLIPS_PER_VIDEO = int(os.getenv("CLIPS_PER_VIDEO", "5"))
 
 # ── ElevenLabs Sound Effects (~$0.01/clip) ────────────────
