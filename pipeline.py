@@ -2,27 +2,24 @@
 """
 AI World Recreation Video Generator
 
-Generates photorealistic "what if you were there" YouTube Shorts.
-Two content types (randomly selected):
-  - Anime worlds recreated as live-action
-  - Historical events witnessed firsthand
+Photorealistic AI video shorts: anime worlds + historical events.
 
 Pipeline:
     1. DeepSeek → topic + scene breakdown              [~$0.001]
-    2. FLUX Dev (fal.ai) → photorealistic images        [~$0.025/image]
-       ElevenLabs SFX → ambient sounds                  [~$0.01/scene]
-    3. FFmpeg → Ken Burns + crossfade + BGM              [free]
+    2. Wan 2.1 (fal.ai) → video clips (parallel)       [~$0.10/clip]
+       ElevenLabs SFX → ambient sounds                  [~$0.01/clip]
+    3. FFmpeg → scale + SFX + crossfade + BGM            [free]
 
-Cost per video (8 scenes): ~$0.22
-Cost per day (3 videos): ~$0.66
-Cost per month: ~$20 (≈¥3,000)
+Cost per video (5 clips): ~$0.55
+Cost per day (2 videos): ~$1.10
+Cost per month: ~$33 (within budget)
 
 Usage:
     python pipeline.py                         # Random topic
-    python pipeline.py --type anime            # Force anime topic
-    python pipeline.py --type historical       # Force historical topic
-    python pipeline.py --batch 3               # Generate 3 videos
-    python pipeline.py --dry-run               # Topic only, no API spend
+    python pipeline.py --type anime            # Force anime
+    python pipeline.py --type historical       # Force historical
+    python pipeline.py --batch 2               # Generate 2 videos
+    python pipeline.py --dry-run               # Topic only, no spend
 """
 import json
 import logging
@@ -32,10 +29,9 @@ from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
-import requests
 import config
 from scripts.generate import generate_topic
-from imagegen.flux import generate_all_scene_images
+from videogen.wan import generate_all_clips, check_fal_balance, estimate_cost
 from sfx.elevenlabs_sfx import generate_all_scene_sfx
 from postprocess.effects import compose_final_video
 
@@ -48,46 +44,16 @@ def _log_timing(step_name: str, start: float) -> float:
     return time.time()
 
 
-def _check_fal_balance(num_scenes: int) -> bool:
-    """Check fal.ai balance BEFORE spending money. Returns True if OK."""
-    estimated = num_scenes * 0.025  # FLUX Dev cost per image
-    try:
-        resp = requests.get(
-            "https://rest.alpha.fal.ai/billing/balance",
-            headers={"Authorization": f"Key {config.FAL_KEY}"},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            balance = float(resp.json().get("balance", resp.json().get("amount", 0)))
-            logger.info(f"fal.ai balance: ${balance:.2f} (need ~${estimated:.2f})")
-            if balance < estimated:
-                logger.error(
-                    f"INSUFFICIENT BALANCE: ${balance:.2f} < ${estimated:.2f}. "
-                    f"Top up at https://fal.ai/dashboard/billing"
-                )
-                return False
-            return True
-        elif resp.status_code == 401:
-            logger.error("fal.ai auth failed — check FAL_KEY")
-            return False
-        else:
-            logger.warning(f"Balance check returned {resp.status_code}, proceeding")
-            return True
-    except Exception as e:
-        logger.warning(f"Balance check failed ({e}), proceeding with caution")
-        return True
-
-
 def run_pipeline(
     force_type: str = None,
-    num_scenes: int = None,
+    num_clips: int = None,
     bgm_path: str = None,
     output_name: str = None,
     dry_run: bool = False,
 ) -> str:
     """
     Run the full video generation pipeline.
-    dry_run=True: only generates topic (~$0.001), no images/SFX.
+    dry_run=True: only generates topic (~$0.001), no video/SFX.
     """
     pipeline_start = time.time()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -103,7 +69,7 @@ def run_pipeline(
 
     # ── Step 1: Generate topic + scenes (~$0.001) ─────────
     logger.info("── Step 1/3: Generating topic...")
-    topic = generate_topic(force_type=force_type, num_scenes=num_scenes)
+    topic = generate_topic(force_type=force_type, num_clips=num_clips)
 
     topic_file = run_dir / "topic.json"
     with open(topic_file, "w") as f:
@@ -112,49 +78,48 @@ def run_pipeline(
     scenes = topic["scenes"]
     logger.info(f"  Topic: {topic['title']}")
     logger.info(f"  Type: {topic.get('topic_type', 'unknown')}")
-    logger.info(f"  Scenes: {len(scenes)}")
+    logger.info(f"  Clips: {len(scenes)}")
     for s in scenes:
-        logger.info(f"    #{s['scene_number']}: {s['image_prompt'][:80]}...")
+        logger.info(f"    #{s['scene_number']}: {s['video_prompt'][:80]}...")
 
     step_time = _log_timing("Topic generation", step_time)
 
     # ── Dry run: stop here ────────────────────────────────
     if dry_run:
-        img_cost = len(scenes) * 0.025
+        cost = estimate_cost(len(scenes))
         sfx_cost = len(scenes) * 0.01
-        total = img_cost + sfx_cost
         logger.info(f"DRY RUN COMPLETE — no money spent")
         logger.info(f"Topic saved: {topic_file}")
-        logger.info(f"Estimated cost: ${img_cost:.3f} (images) + ${sfx_cost:.3f} (SFX) = ${total:.3f}")
+        logger.info(f"Estimated cost: ${cost:.2f} (video) + ${sfx_cost:.2f} (SFX) = ${cost + sfx_cost:.2f}")
         return str(topic_file)
 
-    # ── Preflight: check fal.ai balance ─────────────────
-    if not _check_fal_balance(len(scenes)):
+    # ── Preflight: check fal.ai balance ───────────────────
+    if not check_fal_balance(len(scenes)):
         logger.error("Aborting — insufficient fal.ai balance")
         return str(topic_file)
 
-    # ── Step 2: Generate images + SFX in parallel ─────────
-    logger.info("── Step 2/3: Generating images + SFX (parallel)...")
-    images_dir = run_dir / "images"
+    # ── Step 2: Generate video clips + SFX in parallel ────
+    logger.info("── Step 2/3: Generating video clips + SFX (parallel)...")
+    clips_dir = run_dir / "clips"
     sfx_dir = run_dir / "sfx"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        img_future = executor.submit(generate_all_scene_images, scenes, images_dir)
+        clip_future = executor.submit(generate_all_clips, scenes, clips_dir)
         sfx_future = executor.submit(generate_all_scene_sfx, scenes, sfx_dir)
 
-        image_paths = img_future.result()
+        clip_paths = clip_future.result()
         sfx_results = sfx_future.result()
 
-    logger.info(f"Images: {len(image_paths)} | SFX: {len(sfx_results)}")
+    logger.info(f"Clips: {len(clip_paths)} | SFX: {len(sfx_results)}")
 
     sfx_file = run_dir / "sfx_results.json"
     with open(sfx_file, "w") as f:
         json.dump(sfx_results, f, indent=2, default=str)
 
-    step_time = _log_timing("Image + SFX generation", step_time)
+    step_time = _log_timing("Video + SFX generation", step_time)
 
-    # ── Step 3: Compose video ─────────────────────────────
-    logger.info("── Step 3/3: Composing video...")
+    # ── Step 3: Compose final video ───────────────────────
+    logger.info("── Step 3/3: Composing final video...")
 
     if not bgm_path:
         bgm_candidates = list(config.BGM_DIR.glob("*.*"))
@@ -162,7 +127,7 @@ def run_pipeline(
             bgm_path = str(bgm_candidates[0])
 
     result = compose_final_video(
-        image_paths=image_paths,
+        video_paths=clip_paths,
         sfx_results=sfx_results,
         scenes=scenes,
         output_path=final_output,
@@ -177,24 +142,21 @@ def run_pipeline(
 
 
 def run_batch(
-    num_videos: int = 3,
-    num_scenes: int = None,
+    num_videos: int = 2,
+    num_clips: int = None,
     bgm_path: str = None,
     dry_run: bool = False,
 ) -> list[str]:
-    """Generate multiple videos (alternating anime/historical)."""
+    """Generate multiple videos."""
     results = []
-
     for i in range(num_videos):
         logger.info(f"\nBATCH {i+1}/{num_videos}")
         result = run_pipeline(
-            force_type=None,  # Random each time
-            num_scenes=num_scenes,
+            num_clips=num_clips,
             bgm_path=bgm_path,
             dry_run=dry_run,
         )
         results.append(result)
-
     return results
 
 
@@ -202,16 +164,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate AI World Recreation shorts",
     )
-    parser.add_argument("--type", choices=["anime", "historical"], default=None,
-                        help="Force topic type (default: random)")
-    parser.add_argument("--num-scenes", type=int, default=None,
-                        help=f"Scenes per video (default: {config.SCENES_PER_VIDEO})")
-    parser.add_argument("--batch", type=int, default=None,
-                        help="Generate multiple videos")
+    parser.add_argument("--type", choices=["anime", "historical"], default=None)
+    parser.add_argument("--num-clips", type=int, default=None)
+    parser.add_argument("--batch", type=int, default=None)
     parser.add_argument("--bgm", default=None)
     parser.add_argument("--output", default=None)
     parser.add_argument("--dry-run", action="store_true",
-                        help="Topic only, no image/SFX generation")
+                        help="Topic only, no video/SFX generation")
     parser.add_argument("-v", "--verbose", action="store_true")
 
     args = parser.parse_args()
@@ -225,13 +184,13 @@ def main():
     if not args.dry_run:
         config.validate_api_keys()
     elif not config.DEEPSEEK_API_KEY:
-        print("FATAL: Missing DEEPSEEK_API_KEY (needed even for dry-run)")
+        print("FATAL: Missing DEEPSEEK_API_KEY")
         return
 
     if args.batch:
         results = run_batch(
             num_videos=args.batch,
-            num_scenes=args.num_scenes,
+            num_clips=args.num_clips,
             bgm_path=args.bgm,
             dry_run=args.dry_run,
         )
@@ -241,7 +200,7 @@ def main():
     else:
         result = run_pipeline(
             force_type=args.type,
-            num_scenes=args.num_scenes,
+            num_clips=args.num_clips,
             bgm_path=args.bgm,
             output_name=args.output,
             dry_run=args.dry_run,
