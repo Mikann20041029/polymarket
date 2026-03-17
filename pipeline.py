@@ -6,13 +6,13 @@ Photorealistic AI video shorts: anime worlds + historical events.
 
 Pipeline:
     1. DeepSeek → topic + scene breakdown              [~$0.001]
-    2. Wan 2.1 (fal.ai) → video clips (parallel)       [~$0.10/clip]
+    2. Wan 2.1 (fal.ai) → video clips (parallel)       [~$0.20/clip at 480p]
        ElevenLabs SFX → ambient sounds                  [~$0.01/clip]
     3. FFmpeg → scale + SFX + crossfade + BGM            [free]
 
-Cost per video (5 clips): ~$0.55
-Cost per day (2 videos): ~$1.10
-Cost per month: ~$33 (within budget)
+Cost per video (5 clips): ~$1.05
+Cost per day (1 video): ~$1.05
+Cost per month (30 videos): ~$31.50
 
 Usage:
     python pipeline.py                         # Random topic

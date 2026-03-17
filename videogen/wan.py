@@ -15,7 +15,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-COST_PER_CLIP = 0.10
+COST_PER_CLIP = 0.20  # 480p. 720p = $0.40
 MIN_VIDEO_SIZE_BYTES = 50_000
 
 
@@ -81,8 +81,8 @@ def generate_clip(prompt: str, output_path: Path) -> str:
         config.FAL_VIDEO_MODEL,
         arguments={
             "prompt": prompt,
-            "num_frames": config.WAN_NUM_FRAMES,
             "resolution": config.WAN_RESOLUTION,
+            "aspect_ratio": "9:16",
             "enable_safety_checker": True,
         },
         with_logs=True,
