@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
+import requests
 import config
 from scripts.generate import generate_topic
 from imagegen.flux import generate_all_scene_images
@@ -45,6 +46,36 @@ def _log_timing(step_name: str, start: float) -> float:
     elapsed = time.time() - start
     logger.info(f"  >> {step_name}: {elapsed:.1f}s")
     return time.time()
+
+
+def _check_fal_balance(num_scenes: int) -> bool:
+    """Check fal.ai balance BEFORE spending money. Returns True if OK."""
+    estimated = num_scenes * 0.025  # FLUX Dev cost per image
+    try:
+        resp = requests.get(
+            "https://rest.alpha.fal.ai/billing/balance",
+            headers={"Authorization": f"Key {config.FAL_KEY}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            balance = float(resp.json().get("balance", resp.json().get("amount", 0)))
+            logger.info(f"fal.ai balance: ${balance:.2f} (need ~${estimated:.2f})")
+            if balance < estimated:
+                logger.error(
+                    f"INSUFFICIENT BALANCE: ${balance:.2f} < ${estimated:.2f}. "
+                    f"Top up at https://fal.ai/dashboard/billing"
+                )
+                return False
+            return True
+        elif resp.status_code == 401:
+            logger.error("fal.ai auth failed — check FAL_KEY")
+            return False
+        else:
+            logger.warning(f"Balance check returned {resp.status_code}, proceeding")
+            return True
+    except Exception as e:
+        logger.warning(f"Balance check failed ({e}), proceeding with caution")
+        return True
 
 
 def run_pipeline(
@@ -95,6 +126,11 @@ def run_pipeline(
         logger.info(f"DRY RUN COMPLETE — no money spent")
         logger.info(f"Topic saved: {topic_file}")
         logger.info(f"Estimated cost: ${img_cost:.3f} (images) + ${sfx_cost:.3f} (SFX) = ${total:.3f}")
+        return str(topic_file)
+
+    # ── Preflight: check fal.ai balance ─────────────────
+    if not _check_fal_balance(len(scenes)):
+        logger.error("Aborting — insufficient fal.ai balance")
         return str(topic_file)
 
     # ── Step 2: Generate images + SFX in parallel ─────────
