@@ -1,10 +1,19 @@
 """
-Concept generation using DeepSeek API (OpenAI-compatible).
-Generates "Impossible Satisfying" video concepts — surreal, physics-defying,
-visually mesmerizing scenes with matching ASMR sound descriptions.
+Topic & scene generation using DeepSeek API.
+
+Two content categories (randomly selected each run):
+  1. Anime World — photorealistic "as if you entered the anime world"
+  2. Historical Event — photorealistic "as if you witnessed it firsthand"
+
+Each topic is broken into 8 scenes with:
+  - Detailed FLUX image prompt (photorealistic, 9:16 vertical)
+  - Camera movement type for Ken Burns effect
+  - Ambient SFX description
+  - Optional text overlay (year, location, etc.)
 """
 import json
 import re
+import random
 import logging
 import argparse
 from pathlib import Path
@@ -13,129 +22,117 @@ import config
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a creative director for "Impossible Satisfying" — a viral TikTok/YouTube Shorts channel.
+SYSTEM_PROMPT = """You are a creative director for a viral YouTube Shorts channel.
+You create 40-60 second photorealistic "world recreation" videos.
 
-WHAT MAKES SATISFYING VIDEOS GO VIRAL:
-1. HOOK IN 0.3 SECONDS — first frame must show something impossible already happening
-2. CONTINUOUS ESCALATION — each moment more satisfying than the last
-3. PERFECT LOOP — end connects seamlessly to start (3-5x more views)
-4. HIGH CONTRAST — dark/black background + vivid glowing subject
-5. SLOW MOTION feel — smooth, deliberate movements
-6. ASMR SOUND — every visual must have a matching crisp, satisfying sound
+TWO CONTENT TYPES (you will be told which one):
 
-RULES:
-- No words, no characters, no narration — pure visual + sound
-- Dark/black backgrounds ONLY
-- Cinematic rim lighting, volumetric light, dramatic shadows
-- 9:16 vertical, 5 seconds per clip
-- Family-friendly
+TYPE A — ANIME WORLD RECREATION:
+- Take a famous anime and recreate its world as photorealistic live-action
+- The viewer should feel like they STEPPED INTO the anime world
+- Locations, architecture, nature, atmosphere — all from the anime but looking 100% real
+- Famous landmarks from the anime, iconic scenes turned photorealistic
+- Examples: Studio Ghibli worlds, One Piece locations, Attack on Titan walls, Naruto's village
 
-AVOID:
-- Static scenes, slow reveals, realistic physics, cluttered backgrounds, flat lighting
+TYPE B — HISTORICAL EVENT WITNESS:
+- Take a famous historical event and recreate it as if photographed on scene
+- The viewer should feel like they TIME-TRAVELED to witness it
+- Multiple angles/moments of the same event
+- Examples: Construction of the pyramids, Pompeii eruption, D-Day landing, Moon landing, Fall of Berlin Wall
 
-OUTPUT: Return {"concepts": [...]} as JSON. No markdown fences."""
+CRITICAL RULES FOR ALL SCENES:
+1. SCENE 1 MUST BE THE HOOK — the single most visually stunning, jaw-dropping image that makes people STOP scrolling. This is life or death for the video.
+2. Every image must look like a REAL PHOTOGRAPH — not CGI, not painting, not illustration
+3. No text in the images themselves
+4. Consistent visual style across all scenes (same lighting mood, color grading)
+5. 9:16 vertical framing — compose for phone screens
+6. Include people/figures where appropriate for scale and immersion (but no specific real people)
+7. Rich environmental detail — weather, particles, atmospheric effects
 
-CONCEPT_TEMPLATE = """Generate {num_clips} video concepts. Theme: {theme}
+OUTPUT: Return a JSON object. No markdown."""
 
-DO NOT REPEAT these previous concepts:
-{used_concepts}
+TOPIC_TEMPLATE_ANIME = """Generate a video topic for ANIME WORLD RECREATION.
 
-Return this exact JSON structure:
-{{"concepts": [
-  {{
-    "clip_number": 1,
-    "title": "2-4 word title",
-    "visual_prompt": "Single flowing paragraph, 80+ words. Must include: the specific object and its material/texture, dark background, cinematic lighting setup, exact camera movement, the IMPOSSIBLE physics frame by frame (what happens at second 0, 1, 2, 3, 4), particle effects. First frame must already be mid-action. Be hyper-specific about motion speed, direction, deformation.",
-    "sound_prompt": "Single paragraph, 40+ words. Describe: primary satisfying sound, layered textures, spatial quality (reverb, stereo), ASMR crispness. Sound must perfectly match the visual action.",
-    "text_overlay": null,
-    "hook_type": "impossible_physics",
-    "color_palette": "dark bg + 2 vivid colors",
-    "loop_friendly": true
-  }}
-]}}
+Pick a specific anime and recreate its world as photorealistic scenes.
+Choose from well-known anime that have distinctive, visually rich worlds.
 
-QUALITY REQUIREMENTS:
-- visual_prompt: 80+ words, hyper-detailed physics description
-- sound_prompt: 40+ words, layered audio design
-- hook_type: one of impossible_physics, satisfying_transformation, surreal_beauty, unexpected_reveal, perfect_loop
-- loop_friendly: strongly prefer true
-- text_overlay: null unless truly needed (rare — only "???" or "HOW")
-- Vary materials across concepts: glass, metal, liquid, crystal, organic, magnetic
-- Vary physics: reverse gravity, phase change, impossible geometry, scale shift"""
+PREVIOUSLY USED TOPICS (DO NOT REPEAT):
+{used_topics}
+
+Return this JSON:
+{{
+  "topic_type": "anime",
+  "title": "Short title for the video (Japanese + English, e.g. 'ハウルの動く城の世界をAIで実写化 / Howl's Moving Castle in Real Life')",
+  "source_anime": "Name of the anime",
+  "description": "1-2 sentence description of what viewers will see",
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "image_prompt": "ULTRA-DETAILED prompt for FLUX image generation. Must produce photorealistic output. Include: exact subject, environment details, materials, lighting (golden hour/overcast/dramatic), weather, atmospheric effects (fog, dust, rays), camera angle (low angle/eye level/aerial), lens type (wide/telephoto/macro). 9:16 vertical composition. 80+ words. This prompt directly generates the image — be SPECIFIC. Start with 'Photorealistic photograph of...' or 'Ultra-realistic photo of...'",
+      "camera_movement": "One of: zoom_in, zoom_out, pan_left, pan_right, pan_up, pan_down",
+      "sfx_prompt": "Ambient sound for this scene (wind, crowds, water, fire, etc.)",
+      "text_overlay": "Optional short text (location name, year, etc.) or null"
+    }}
+  ]
+}}
+
+Generate exactly {num_scenes} scenes. Scene 1 = the HOOK (most visually striking)."""
+
+TOPIC_TEMPLATE_HISTORY = """Generate a video topic for HISTORICAL EVENT WITNESS.
+
+Pick a specific historical event and recreate key moments as if photographed on scene.
+Choose events that are visually dramatic and widely known.
+
+PREVIOUSLY USED TOPICS (DO NOT REPEAT):
+{used_topics}
+
+Return this JSON:
+{{
+  "topic_type": "historical",
+  "title": "Short title (Japanese + English, e.g. 'ポンペイ最後の日をAIで再現 / AI Recreates the Last Day of Pompeii')",
+  "event": "Name of the historical event",
+  "era": "Time period (e.g. '79 AD', '1945', '1969')",
+  "description": "1-2 sentence description",
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "image_prompt": "ULTRA-DETAILED prompt for FLUX image generation. Photorealistic historical recreation. Include: exact subject, period-accurate details (clothing, architecture, technology), environment, lighting, weather, atmospheric effects, camera angle, lens type. 9:16 vertical. 80+ words. Start with 'Photorealistic photograph of...'",
+      "camera_movement": "One of: zoom_in, zoom_out, pan_left, pan_right, pan_up, pan_down",
+      "sfx_prompt": "Period-appropriate ambient sound for this scene",
+      "text_overlay": "Optional: year, location, or null"
+    }}
+  ]
+}}
+
+Generate exactly {num_scenes} scenes. Scene 1 = the HOOK (most visually dramatic moment)."""
 
 
-def _load_used_concepts() -> list[str]:
-    """Load previously used concept titles to avoid repetition."""
-    path = config.USED_CONCEPTS_FILE
+def _load_used_topics() -> list[str]:
+    """Load previously used topic titles."""
+    path = config.USED_TOPICS_FILE
     if path.exists():
         with open(path) as f:
             data = json.load(f)
-        if len(data) > 200:
-            data = data[-200:]
-            _save_used_concepts(data)
+        if len(data) > 300:
+            data = data[-300:]
+            _save_used_topics(data)
         return data
     return []
 
 
-def _save_used_concepts(used: list[str]):
-    """Save updated used concept titles."""
-    config.USED_CONCEPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(config.USED_CONCEPTS_FILE, "w") as f:
-        json.dump(used, f, indent=2)
-
-
-def _validate_concept(concept: dict, index: int) -> dict:
-    """
-    Validate a single concept. Raises ValueError if it would produce bad output.
-    Catches problems HERE so we never waste API money on garbage input.
-    """
-    required = ["visual_prompt", "sound_prompt", "title", "hook_type"]
-    for field in required:
-        if field not in concept or not concept[field]:
-            raise ValueError(f"Concept {index}: missing '{field}'")
-
-    vp = concept["visual_prompt"]
-    sp = concept["sound_prompt"]
-
-    vp_words = len(vp.split())
-    sp_words = len(sp.split())
-
-    if vp_words < 50:
-        raise ValueError(
-            f"Concept {index} '{concept['title']}': visual_prompt only {vp_words} words "
-            f"(need 50+). Short prompts produce generic, boring videos."
-        )
-
-    if sp_words < 20:
-        raise ValueError(
-            f"Concept {index} '{concept['title']}': sound_prompt only {sp_words} words "
-            f"(need 20+). Short prompts produce generic sounds."
-        )
-
-    # Defaults
-    concept.setdefault("clip_number", index + 1)
-    concept.setdefault("text_overlay", None)
-    concept.setdefault("color_palette", "white, black")
-    concept.setdefault("loop_friendly", True)
-
-    if concept["text_overlay"] in ("null", "none", "", "None"):
-        concept["text_overlay"] = None
-
-    return concept
+def _save_used_topics(used: list[str]):
+    config.USED_TOPICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(config.USED_TOPICS_FILE, "w") as f:
+        json.dump(used, f, indent=2, ensure_ascii=False)
 
 
 def _parse_json_response(raw: str) -> dict | list:
-    """
-    Parse LLM JSON response with multiple fallback strategies.
-    Handles: clean JSON, markdown-fenced JSON, wrapper objects.
-    """
-    # Try direct parse first
+    """Parse LLM JSON with multiple fallback strategies."""
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Try extracting JSON object {...}
     match = re.search(r'\{[\s\S]*\}', raw)
     if match:
         try:
@@ -143,61 +140,102 @@ def _parse_json_response(raw: str) -> dict | list:
         except json.JSONDecodeError:
             pass
 
-    # Try extracting JSON array [...]
-    match = re.search(r'\[[\s\S]*\]', raw)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
-
-    # Try stripping markdown fences
     if "```" in raw:
-        parts = raw.split("```")
-        for part in parts[1::2]:  # Odd-indexed parts are inside fences
+        for part in raw.split("```")[1::2]:
             clean = part.lstrip("json").strip()
             try:
                 return json.loads(clean)
             except json.JSONDecodeError:
                 continue
 
-    raise ValueError(f"Could not parse JSON from LLM response: {raw[:300]}")
+    raise ValueError(f"Could not parse JSON: {raw[:300]}")
 
 
-def generate_concepts(
-    theme: str = "surreal physics",
-    num_clips: int = None,
-) -> list[dict]:
+def _validate_topic(topic: dict) -> dict:
+    """Validate topic structure before spending money on images."""
+    required = ["title", "scenes"]
+    for field in required:
+        if field not in topic or not topic[field]:
+            raise ValueError(f"Topic missing '{field}'")
+
+    if not topic.get("topic_type"):
+        topic["topic_type"] = "unknown"
+
+    scenes = topic["scenes"]
+    if len(scenes) < 3:
+        raise ValueError(f"Only {len(scenes)} scenes (need at least 3)")
+
+    for i, scene in enumerate(scenes):
+        if "image_prompt" not in scene or not scene["image_prompt"]:
+            raise ValueError(f"Scene {i+1}: missing image_prompt")
+
+        prompt_words = len(scene["image_prompt"].split())
+        if prompt_words < 30:
+            raise ValueError(
+                f"Scene {i+1}: image_prompt only {prompt_words} words (need 30+). "
+                f"This will produce a generic, low-quality image."
+            )
+
+        # Defaults
+        scene.setdefault("scene_number", i + 1)
+        scene.setdefault("camera_movement", "zoom_in")
+        scene.setdefault("sfx_prompt", "ambient atmosphere")
+        if scene.get("text_overlay") in ("null", "none", "", "None"):
+            scene["text_overlay"] = None
+
+        # Validate camera movement
+        valid_movements = {"zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down"}
+        if scene["camera_movement"] not in valid_movements:
+            scene["camera_movement"] = "zoom_in"
+
+    return topic
+
+
+def generate_topic(
+    force_type: str = None,
+    num_scenes: int = None,
+) -> dict:
     """
-    Generate video concepts using DeepSeek.
-    Validates every concept before returning — no garbage goes to paid APIs.
+    Generate a video topic with scene breakdown.
+
+    Args:
+        force_type: "anime" or "historical". None = random 50/50.
+        num_scenes: Number of scenes. Default from config.
+
+    Returns validated topic dict with scenes.
     """
-    num_clips = num_clips or config.CLIPS_PER_VIDEO
-    num_clips = max(1, min(num_clips, 10))
+    num_scenes = num_scenes or config.SCENES_PER_VIDEO
+    num_scenes = max(4, min(num_scenes, 15))
 
-    used_concepts = _load_used_concepts()
+    used_topics = _load_used_topics()
 
-    # Sanitize theme
-    theme = re.sub(r'[^\w\s,.\-]', '', theme)[:200]
+    # Random selection: anime or historical
+    topic_type = force_type or random.choice(["anime", "historical"])
 
     client = OpenAI(
         api_key=config.DEEPSEEK_API_KEY,
         base_url=config.DEEPSEEK_BASE_URL,
     )
-    model = config.DEEPSEEK_MODEL
-    logger.info(f"Generating {num_clips} concepts, theme='{theme}'")
 
-    used_str = "\n".join(f"- {c}" for c in used_concepts[-50:]) if used_concepts else "(none)"
-    user_msg = CONCEPT_TEMPLATE.format(
-        num_clips=num_clips,
-        theme=theme,
-        used_concepts=used_str,
-    )
+    used_str = "\n".join(f"- {t}" for t in used_topics[-50:]) if used_topics else "(none)"
+
+    if topic_type == "anime":
+        user_msg = TOPIC_TEMPLATE_ANIME.format(
+            num_scenes=num_scenes,
+            used_topics=used_str,
+        )
+    else:
+        user_msg = TOPIC_TEMPLATE_HISTORY.format(
+            num_scenes=num_scenes,
+            used_topics=used_str,
+        )
+
+    logger.info(f"Generating topic: type={topic_type}, scenes={num_scenes}")
 
     resp = client.chat.completions.create(
-        model=model,
+        model=config.DEEPSEEK_MODEL,
         max_tokens=config.SCRIPT_MAX_TOKENS,
-        temperature=0.8,
+        temperature=0.85,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -206,49 +244,27 @@ def generate_concepts(
     )
 
     raw = resp.choices[0].message.content.strip()
-    logger.debug(f"Raw LLM response: {raw[:500]}")
+    logger.debug(f"Raw response: {raw[:500]}")
 
-    parsed = _parse_json_response(raw)
+    topic = _parse_json_response(raw)
+    if not isinstance(topic, dict):
+        raise ValueError(f"Expected dict, got {type(topic)}")
 
-    # Extract concepts list from various wrapper formats
-    if isinstance(parsed, dict) and "concepts" in parsed:
-        concepts = parsed["concepts"]
-    elif isinstance(parsed, list):
-        concepts = parsed
-    elif isinstance(parsed, dict):
-        # Try any key that has a list value
-        concepts = None
-        for v in parsed.values():
-            if isinstance(v, list):
-                concepts = v
-                break
-        if concepts is None:
-            raise ValueError(f"Unexpected JSON structure: {list(parsed.keys())}")
-    else:
-        raise ValueError(f"Unexpected response type: {type(parsed)}")
+    topic = _validate_topic(topic)
 
-    if not concepts:
-        raise ValueError("Empty concepts list from DeepSeek")
+    # Save to dedup
+    used_topics.append(topic["title"])
+    _save_used_topics(used_topics)
 
-    # Validate EVERY concept before saving or returning
-    validated = []
-    for i, concept in enumerate(concepts):
-        validated.append(_validate_concept(concept, i))
-
-    # Update de-duplication list
-    new_titles = [c["title"] for c in validated]
-    used_concepts.extend(new_titles)
-    _save_used_concepts(used_concepts)
-
-    logger.info(f"Generated {len(validated)} validated concepts: {new_titles}")
-    return validated
+    logger.info(f"Topic: {topic['title']} ({len(topic['scenes'])} scenes)")
+    return topic
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     p = argparse.ArgumentParser()
-    p.add_argument("--theme", default="surreal physics")
-    p.add_argument("--num-clips", type=int, default=None)
+    p.add_argument("--type", choices=["anime", "historical"], default=None)
+    p.add_argument("--num-scenes", type=int, default=None)
     args = p.parse_args()
-    result = generate_concepts(args.theme, args.num_clips)
+    result = generate_topic(args.type, args.num_scenes)
     print(json.dumps(result, indent=2, ensure_ascii=False))

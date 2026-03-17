@@ -1,24 +1,23 @@
-name: generate-satisfying-short
+name: generate-world-recreation-short
 
 on:
   workflow_dispatch:
     inputs:
-      theme:
-        description: "Visual theme (e.g., glass and crystal, liquid metal, surreal physics)"
+      type:
+        description: "Topic type: anime, historical, or random"
         required: false
-        default: "surreal physics"
-      num_clips:
-        description: "Number of clips per video (2-5)"
+        default: ""
+      num_scenes:
+        description: "Number of scenes per video (4-12)"
         required: false
-        default: "3"
+        default: "8"
       batch:
-        description: "Number of separate videos to generate (1-5)"
+        description: "Number of videos to generate (1-5)"
         required: false
         default: "1"
-  # DISABLED: Do not auto-run until monetization is live.
-  # Uncomment the schedule below only after the channel is validated and earning.
+  # DISABLED: Uncomment after channel is validated and earning
   # schedule:
-  #   - cron: "0 */12 * * *"
+  #   - cron: "0 */8 * * *"  # Every 8 hours = 3/day
 
 jobs:
   generate:
@@ -47,22 +46,28 @@ jobs:
           test -n "${{ secrets.ELEVENLABS_API_KEY }}" || { echo "::error::Missing ELEVENLABS_API_KEY secret"; exit 1; }
           test -n "${{ secrets.FAL_KEY }}" || { echo "::error::Missing FAL_KEY secret"; exit 1; }
 
-      - name: Generate satisfying short video
+      - name: Generate world recreation short
         timeout-minutes: 25
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           FAL_KEY: ${{ secrets.FAL_KEY }}
         run: |
+          TYPE_ARG=""
+          if [ -n "${{ github.event.inputs.type }}" ] && [ "${{ github.event.inputs.type }}" != "" ]; then
+            TYPE_ARG="--type ${{ github.event.inputs.type }}"
+          fi
+
           if [ "${{ github.event.inputs.batch || '1' }}" != "1" ]; then
             python pipeline.py \
               --batch ${{ github.event.inputs.batch }} \
-              --num-clips ${{ github.event.inputs.num_clips || '3' }} \
+              --num-scenes ${{ github.event.inputs.num_scenes || '8' }} \
+              $TYPE_ARG \
               --verbose
           else
             python pipeline.py \
-              --theme "${{ github.event.inputs.theme || 'surreal physics' }}" \
-              --num-clips ${{ github.event.inputs.num_clips || '3' }} \
+              --num-scenes ${{ github.event.inputs.num_scenes || '8' }} \
+              $TYPE_ARG \
               --verbose
           fi
 
@@ -70,7 +75,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: satisfying-short-${{ github.run_number }}
+          name: world-short-${{ github.run_number }}
           path: output/*.mp4
           retention-days: 30
           if-no-files-found: warn
