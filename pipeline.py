@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
 """
-Impossible Satisfying Video Generator — Main Pipeline
+AI World Recreation Video Generator
 
-Generates surreal, physics-defying, oddly satisfying vertical short videos
-(15-30 seconds) with matching ASMR sound effects. No language needed.
+Generates photorealistic "what if you were there" YouTube Shorts.
+Two content types (randomly selected):
+  - Anime worlds recreated as live-action
+  - Historical events witnessed firsthand
+
+Pipeline:
+    1. DeepSeek → topic + scene breakdown              [~$0.001]
+    2. FLUX Dev (fal.ai) → photorealistic images        [~$0.025/image]
+       ElevenLabs SFX → ambient sounds                  [~$0.01/scene]
+    3. FFmpeg → Ken Burns + crossfade + BGM              [free]
+
+Cost per video (8 scenes): ~$0.22
+Cost per day (3 videos): ~$0.66
+Cost per month: ~$20 (≈¥3,000)
 
 Usage:
-    python pipeline.py --theme "glass and crystal"
-    python pipeline.py --theme "liquid metal" --num-clips 5
-    python pipeline.py --batch 3  # Generate 3 separate videos
-
-Pipeline (3 steps, all via existing API keys):
-    1. DeepSeek → concept (visual prompt + sound prompt)
-    2. Kling 3.0 (fal.ai) → video clip  }  run in parallel
-       ElevenLabs SFX V2 → ASMR audio   }  per concept
-    3. FFmpeg → layer sound on video, optional text overlay, stitch + BGM
+    python pipeline.py                         # Random topic
+    python pipeline.py --type anime            # Force anime topic
+    python pipeline.py --type historical       # Force historical topic
+    python pipeline.py --batch 3               # Generate 3 videos
+    python pipeline.py --dry-run               # Topic only, no API spend
 """
 import json
 import logging
@@ -25,45 +33,30 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import config
-from scripts.generate import generate_concepts
-from sfx.elevenlabs_sfx import generate_all_clip_sfx
-from videogen.kling import generate_all_clip_videos
+from scripts.generate import generate_topic
+from imagegen.flux import generate_all_scene_images
+from sfx.elevenlabs_sfx import generate_all_scene_sfx
 from postprocess.effects import compose_final_video
 
 logger = logging.getLogger(__name__)
 
-# Theme ideas for variety across batches
-THEMES = [
-    "glass and crystal physics",
-    "liquid metal and mercury",
-    "impossible food transformations",
-    "magnetic and gravitational anomalies",
-    "ice and fire paradoxes",
-    "organic growth and bloom",
-    "geometric impossibilities",
-    "miniature worlds inside objects",
-    "color-shifting materials",
-    "reverse entropy and time manipulation",
-]
-
 
 def _log_timing(step_name: str, start: float) -> float:
-    """Log how long a step took and return current time."""
     elapsed = time.time() - start
-    logger.info(f"  ⏱ {step_name}: {elapsed:.1f}s")
+    logger.info(f"  >> {step_name}: {elapsed:.1f}s")
     return time.time()
 
 
 def run_pipeline(
-    theme: str = "surreal physics",
-    num_clips: int = None,
+    force_type: str = None,
+    num_scenes: int = None,
     bgm_path: str = None,
     output_name: str = None,
+    dry_run: bool = False,
 ) -> str:
     """
     Run the full video generation pipeline.
-
-    Returns path to the final output video.
+    dry_run=True: only generates topic (~$0.001), no images/SFX.
     """
     pipeline_start = time.time()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -71,53 +64,61 @@ def run_pipeline(
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if not output_name:
-        output_name = f"satisfying_{timestamp}.mp4"
-
+        output_name = f"world_{timestamp}.mp4"
     final_output = config.OUTPUT_DIR / output_name
 
-    logger.info(f"=== PIPELINE START: theme='{theme}' ===")
-    logger.info(f"Run directory: {run_dir}")
-
+    logger.info(f"=== PIPELINE START {'[DRY RUN]' if dry_run else ''} ===")
     step_time = time.time()
 
-    # ── Step 1: Generate concepts ─────────────────────────
-    logger.info("── Step 1/3: Generating concepts...")
-    concepts = generate_concepts(theme, num_clips)
+    # ── Step 1: Generate topic + scenes (~$0.001) ─────────
+    logger.info("── Step 1/3: Generating topic...")
+    topic = generate_topic(force_type=force_type, num_scenes=num_scenes)
 
-    concepts_file = run_dir / "concepts.json"
-    with open(concepts_file, "w") as f:
-        json.dump(concepts, f, indent=2, ensure_ascii=False)
-    logger.info(f"Concepts: {len(concepts)} generated")
+    topic_file = run_dir / "topic.json"
+    with open(topic_file, "w") as f:
+        json.dump(topic, f, indent=2, ensure_ascii=False)
 
-    for c in concepts:
-        logger.info(f"  #{c['clip_number']}: {c['title']} ({c['hook_type']})")
+    scenes = topic["scenes"]
+    logger.info(f"  Topic: {topic['title']}")
+    logger.info(f"  Type: {topic.get('topic_type', 'unknown')}")
+    logger.info(f"  Scenes: {len(scenes)}")
+    for s in scenes:
+        logger.info(f"    #{s['scene_number']}: {s['image_prompt'][:80]}...")
 
-    step_time = _log_timing("Concept generation", step_time)
+    step_time = _log_timing("Topic generation", step_time)
 
-    # ── Step 2: Generate video + SFX in parallel ──────────
-    logger.info("── Step 2/3: Generating videos + sound effects (parallel)...")
-    videos_dir = run_dir / "videos"
+    # ── Dry run: stop here ────────────────────────────────
+    if dry_run:
+        img_cost = len(scenes) * 0.025
+        sfx_cost = len(scenes) * 0.01
+        total = img_cost + sfx_cost
+        logger.info(f"DRY RUN COMPLETE — no money spent")
+        logger.info(f"Topic saved: {topic_file}")
+        logger.info(f"Estimated cost: ${img_cost:.3f} (images) + ${sfx_cost:.3f} (SFX) = ${total:.3f}")
+        return str(topic_file)
+
+    # ── Step 2: Generate images + SFX in parallel ─────────
+    logger.info("── Step 2/3: Generating images + SFX (parallel)...")
+    images_dir = run_dir / "images"
     sfx_dir = run_dir / "sfx"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        video_future = executor.submit(generate_all_clip_videos, concepts, videos_dir)
-        sfx_future = executor.submit(generate_all_clip_sfx, concepts, sfx_dir)
+        img_future = executor.submit(generate_all_scene_images, scenes, images_dir)
+        sfx_future = executor.submit(generate_all_scene_sfx, scenes, sfx_dir)
 
-        video_paths = video_future.result()
+        image_paths = img_future.result()
         sfx_results = sfx_future.result()
 
-    logger.info(f"Videos done: {len(video_paths)} clips")
-    logger.info(f"SFX done: {len(sfx_results)} sounds")
+    logger.info(f"Images: {len(image_paths)} | SFX: {len(sfx_results)}")
 
-    # Save SFX results
     sfx_file = run_dir / "sfx_results.json"
     with open(sfx_file, "w") as f:
         json.dump(sfx_results, f, indent=2, default=str)
 
-    step_time = _log_timing("Video + SFX generation (parallel)", step_time)
+    step_time = _log_timing("Image + SFX generation", step_time)
 
-    # ── Step 3: Post-process and compose ──────────────────
-    logger.info("── Step 3/3: Composing final video...")
+    # ── Step 3: Compose video ─────────────────────────────
+    logger.info("── Step 3/3: Composing video...")
 
     if not bgm_path:
         bgm_candidates = list(config.BGM_DIR.glob("*.*"))
@@ -125,9 +126,9 @@ def run_pipeline(
             bgm_path = str(bgm_candidates[0])
 
     result = compose_final_video(
-        video_paths=video_paths,
+        image_paths=image_paths,
         sfx_results=sfx_results,
-        concepts=concepts,
+        scenes=scenes,
         output_path=final_output,
         bgm_path=bgm_path,
     )
@@ -135,78 +136,47 @@ def run_pipeline(
     _log_timing("Post-processing", step_time)
 
     total_elapsed = time.time() - pipeline_start
-    logger.info(f"=== PIPELINE COMPLETE in {total_elapsed:.1f}s ({total_elapsed/60:.1f}min) ===")
-    logger.info(f"Final video: {result}")
-    logger.info(f"Run data saved in: {run_dir}")
-
+    logger.info(f"=== DONE in {total_elapsed:.1f}s === {result}")
     return result
 
 
 def run_batch(
     num_videos: int = 3,
-    clips_per_video: int = None,
+    num_scenes: int = None,
     bgm_path: str = None,
+    dry_run: bool = False,
 ) -> list[str]:
-    """Generate multiple videos with different themes for batch posting."""
-    import random
-    themes = random.sample(THEMES, min(num_videos, len(THEMES)))
+    """Generate multiple videos (alternating anime/historical)."""
     results = []
 
-    for i, theme in enumerate(themes):
-        logger.info(f"\n{'='*60}")
-        logger.info(f"BATCH {i+1}/{num_videos}: theme='{theme}'")
-        logger.info(f"{'='*60}")
-
+    for i in range(num_videos):
+        logger.info(f"\nBATCH {i+1}/{num_videos}")
         result = run_pipeline(
-            theme=theme,
-            num_clips=clips_per_video,
+            force_type=None,  # Random each time
+            num_scenes=num_scenes,
             bgm_path=bgm_path,
+            dry_run=dry_run,
         )
         results.append(result)
-
-    logger.info(f"\nBatch complete! {len(results)} videos generated:")
-    for r in results:
-        logger.info(f"  → {r}")
 
     return results
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate 'Impossible Satisfying' short videos",
+        description="Generate AI World Recreation shorts",
     )
-    parser.add_argument(
-        "--theme",
-        default="surreal physics",
-        help="Visual theme for concepts (default: surreal physics)",
-    )
-    parser.add_argument(
-        "--num-clips",
-        type=int,
-        default=None,
-        help=f"Number of clips per video (default: {config.CLIPS_PER_VIDEO})",
-    )
-    parser.add_argument(
-        "--batch",
-        type=int,
-        default=None,
-        help="Generate multiple videos with different themes",
-    )
-    parser.add_argument(
-        "--bgm",
-        default=None,
-        help="Path to background music file",
-    )
-    parser.add_argument(
-        "--output",
-        default=None,
-        help="Output filename (saved in output/ directory)",
-    )
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable debug logging",
-    )
+    parser.add_argument("--type", choices=["anime", "historical"], default=None,
+                        help="Force topic type (default: random)")
+    parser.add_argument("--num-scenes", type=int, default=None,
+                        help=f"Scenes per video (default: {config.SCENES_PER_VIDEO})")
+    parser.add_argument("--batch", type=int, default=None,
+                        help="Generate multiple videos")
+    parser.add_argument("--bgm", default=None)
+    parser.add_argument("--output", default=None)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Topic only, no image/SFX generation")
+    parser.add_argument("-v", "--verbose", action="store_true")
 
     args = parser.parse_args()
 
@@ -216,23 +186,31 @@ def main():
         datefmt="%H:%M:%S",
     )
 
+    if not args.dry_run:
+        config.validate_api_keys()
+    elif not config.DEEPSEEK_API_KEY:
+        print("FATAL: Missing DEEPSEEK_API_KEY (needed even for dry-run)")
+        return
+
     if args.batch:
         results = run_batch(
             num_videos=args.batch,
-            clips_per_video=args.num_clips,
+            num_scenes=args.num_scenes,
             bgm_path=args.bgm,
+            dry_run=args.dry_run,
         )
-        print(f"\nDone! {len(results)} videos generated.")
+        print(f"\nDone! {len(results)} videos.")
         for r in results:
-            print(f"  → {r}")
+            print(f"  -> {r}")
     else:
         result = run_pipeline(
-            theme=args.theme,
-            num_clips=args.num_clips,
+            force_type=args.type,
+            num_scenes=args.num_scenes,
             bgm_path=args.bgm,
             output_name=args.output,
+            dry_run=args.dry_run,
         )
-        print(f"\nDone! Video saved to: {result}")
+        print(f"\nDone! {result}")
 
 
 if __name__ == "__main__":
