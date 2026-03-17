@@ -1,15 +1,12 @@
 """
 Topic & scene generation using DeepSeek API.
 
-Two content categories (randomly selected each run):
-  1. Anime World — photorealistic "as if you entered the anime world"
-  2. Historical Event — photorealistic "as if you witnessed it firsthand"
+Content selection (weighted random):
+  - 70% Historical events (globally significant, visually dramatic)
+  - 30% Anime worlds (top 20 internationally popular anime)
 
-Each topic is broken into 8 scenes with:
-  - Detailed FLUX image prompt (photorealistic, 9:16 vertical)
-  - Camera movement type for Ken Burns effect
-  - Ambient SFX description
-  - Optional text overlay (year, location, etc.)
+Each scene generates a video_prompt for Wan 2.1 AI video generation.
+All titles in English. Historical text overlays in local language.
 """
 import json
 import re
@@ -22,93 +19,125 @@ import config
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a creative director for a viral YouTube Shorts channel.
-You create 40-60 second photorealistic "world recreation" videos.
+TOP_ANIME = [
+    "Spirited Away",
+    "My Neighbor Totoro",
+    "Princess Mononoke",
+    "Howl's Moving Castle",
+    "Castle in the Sky (Laputa)",
+    "Nausicaa of the Valley of the Wind",
+    "Attack on Titan",
+    "One Piece",
+    "Naruto",
+    "Demon Slayer",
+    "Jujutsu Kaisen",
+    "Dragon Ball Z",
+    "Fullmetal Alchemist: Brotherhood",
+    "Sword Art Online",
+    "Weathering with You",
+    "Your Name (Kimi no Na wa)",
+    "Ghost in the Shell",
+    "Akira",
+    "Violet Evergarden",
+    "Made in Abyss",
+]
 
-TWO CONTENT TYPES (you will be told which one):
+SYSTEM_PROMPT = """You are a creative director for a viral YouTube Shorts channel
+that recreates worlds as photorealistic AI-generated VIDEO clips.
+
+TARGET AUDIENCE: English-speaking global viewers.
+ALL TITLES IN ENGLISH.
+
+TWO CONTENT TYPES:
 
 TYPE A — ANIME WORLD RECREATION:
-- Take a famous anime and recreate its world as photorealistic live-action
-- The viewer should feel like they STEPPED INTO the anime world
-- Locations, architecture, nature, atmosphere — all from the anime but looking 100% real
-- Famous landmarks from the anime, iconic scenes turned photorealistic
-- Examples: Studio Ghibli worlds, One Piece locations, Attack on Titan walls, Naruto's village
+- Recreate a specific anime's world as photorealistic live-action VIDEO
+- The viewer feels like they are WALKING THROUGH the anime world with a camera
+- Show iconic locations from the anime — looking indistinguishable from real footage
+- Camera must MOVE through the scene (tracking shot, dolly, pan) — NOT a still image
 
 TYPE B — HISTORICAL EVENT WITNESS:
-- Take a famous historical event and recreate it as if photographed on scene
-- The viewer should feel like they TIME-TRAVELED to witness it
-- Multiple angles/moments of the same event
-- Examples: Construction of the pyramids, Pompeii eruption, D-Day landing, Moon landing, Fall of Berlin Wall
+- Recreate a famous historical event as if filmed with a camera on scene
+- The viewer feels like they TIME-TRAVELED with a video camera
+- Show key moments of the event as MOVING footage, not stills
+- Pick events that are VISUALLY SPECTACULAR for maximum views
+- Text overlays use the LOCAL LANGUAGE of the country
 
-CRITICAL RULES FOR ALL SCENES:
-1. SCENE 1 MUST BE THE HOOK — the single most visually stunning, jaw-dropping image that makes people STOP scrolling. This is life or death for the video.
-2. Every image must look like a REAL PHOTOGRAPH — not CGI, not painting, not illustration
-3. No text in the images themselves
-4. Consistent visual style across all scenes (same lighting mood, color grading)
-5. 9:16 vertical framing — compose for phone screens
-6. Include people/figures where appropriate for scale and immersion (but no specific real people)
-7. Rich environmental detail — weather, particles, atmospheric effects
+CRITICAL RULES FOR VIDEO PROMPTS:
+1. SCENE 1 = THE HOOK — most visually stunning moment. People stop scrolling or leave.
+2. Every clip must look like REAL VIDEO FOOTAGE — not CGI, not animation
+3. Describe MOTION: camera movement, subject movement, environmental motion (wind, water, fire, crowds)
+4. Include: lighting, weather, atmospheric effects (smoke, dust, fog, rain)
+5. 9:16 vertical, 5 seconds per clip
+6. People/figures for scale where appropriate
+7. Consistent visual style across all scenes
 
-OUTPUT: Return a JSON object. No markdown."""
+OUTPUT: JSON object. No markdown."""
 
-TOPIC_TEMPLATE_ANIME = """Generate a video topic for ANIME WORLD RECREATION.
+TOPIC_TEMPLATE_ANIME = """Generate a video recreating the world of: {anime_name}
 
-Pick a specific anime and recreate its world as photorealistic scenes.
-Choose from well-known anime that have distinctive, visually rich worlds.
+Create 5-second photorealistic VIDEO CLIPS showing iconic locations from this anime
+as if a camera crew walked through the real-life version.
 
-PREVIOUSLY USED TOPICS (DO NOT REPEAT):
+PREVIOUSLY USED (DO NOT REPEAT):
 {used_topics}
 
-Return this JSON:
+Return JSON:
 {{
   "topic_type": "anime",
-  "title": "Short title for the video (Japanese + English, e.g. 'ハウルの動く城の世界をAIで実写化 / Howl's Moving Castle in Real Life')",
-  "source_anime": "Name of the anime",
-  "description": "1-2 sentence description of what viewers will see",
+  "title": "English title (e.g. 'What if {anime_name} Was Real?')",
+  "source_anime": "{anime_name}",
+  "description": "1-2 sentence English description",
   "scenes": [
     {{
       "scene_number": 1,
-      "image_prompt": "ULTRA-DETAILED prompt for FLUX image generation. Must produce photorealistic output. Include: exact subject, environment details, materials, lighting (golden hour/overcast/dramatic), weather, atmospheric effects (fog, dust, rays), camera angle (low angle/eye level/aerial), lens type (wide/telephoto/macro). 9:16 vertical composition. 80+ words. This prompt directly generates the image — be SPECIFIC. Start with 'Photorealistic photograph of...' or 'Ultra-realistic photo of...'",
-      "camera_movement": "One of: zoom_in, zoom_out, pan_left, pan_right, pan_up, pan_down",
-      "sfx_prompt": "Ambient sound for this scene (wind, crowds, water, fire, etc.)",
-      "text_overlay": "Optional short text (location name, year, etc.) or null"
+      "video_prompt": "Prompt for AI video generation (Wan 2.1). Must describe MOVING footage, not a still image. Include: what the camera sees and how it moves (tracking forward, slow pan, dolly zoom), what is happening in the scene (people walking, wind blowing, water flowing), specific materials and textures looking photorealistic, cinematic lighting, atmospheric effects. 9:16 vertical, 5 seconds. 60+ words. Start with 'Photorealistic video footage of...'",
+      "sfx_prompt": "Ambient sound matching the scene (wind, crowds, water, etc.)",
+      "text_overlay": null
     }}
   ]
 }}
 
-Generate exactly {num_scenes} scenes. Scene 1 = the HOOK (most visually striking)."""
+Generate exactly {num_clips} scenes. Scene 1 = HOOK (most stunning)."""
 
-TOPIC_TEMPLATE_HISTORY = """Generate a video topic for HISTORICAL EVENT WITNESS.
+TOPIC_TEMPLATE_HISTORY = """Generate a video recreating a major historical event.
 
-Pick a specific historical event and recreate key moments as if photographed on scene.
-Choose events that are visually dramatic and widely known.
+PICK EVENTS THAT ARE:
+- Visually SPECTACULAR (destruction, massive scale, dramatic moments)
+- Globally known (millions will click)
+- Never seen as "real footage" before
 
-PREVIOUSLY USED TOPICS (DO NOT REPEAT):
+HIGH-VIEW CATEGORIES:
+- Ancient wonders being built (Pyramids, Colosseum, Great Wall)
+- Catastrophic events (Pompeii, Titanic sinking, Hindenburg)
+- Epic battles (D-Day, Thermopylae, Waterloo)
+- Historic firsts (Moon landing, Wright Brothers, first Olympics)
+- Lost civilizations at peak (Ancient Rome, Maya, Ancient Egypt)
+
+PREVIOUSLY USED (DO NOT REPEAT):
 {used_topics}
 
-Return this JSON:
+Return JSON:
 {{
   "topic_type": "historical",
-  "title": "Short title (Japanese + English, e.g. 'ポンペイ最後の日をAIで再現 / AI Recreates the Last Day of Pompeii')",
-  "event": "Name of the historical event",
-  "era": "Time period (e.g. '79 AD', '1945', '1969')",
-  "description": "1-2 sentence description",
+  "title": "English title (e.g. 'AI Recreates the Last Day of Pompeii')",
+  "event": "Name of event",
+  "era": "Time period",
+  "description": "1-2 sentence English description",
   "scenes": [
     {{
       "scene_number": 1,
-      "image_prompt": "ULTRA-DETAILED prompt for FLUX image generation. Photorealistic historical recreation. Include: exact subject, period-accurate details (clothing, architecture, technology), environment, lighting, weather, atmospheric effects, camera angle, lens type. 9:16 vertical. 80+ words. Start with 'Photorealistic photograph of...'",
-      "camera_movement": "One of: zoom_in, zoom_out, pan_left, pan_right, pan_up, pan_down",
-      "sfx_prompt": "Period-appropriate ambient sound for this scene",
-      "text_overlay": "Optional: year, location, or null"
+      "video_prompt": "Prompt for AI video generation. Must describe MOVING footage. Include: camera movement (tracking, pan, dolly), action happening (explosions, crowds running, construction), period-accurate details (clothing, architecture, technology), lighting, weather, atmospheric effects (smoke, fire, dust). 9:16 vertical, 5 seconds. 60+ words. Start with 'Photorealistic video footage of...'",
+      "sfx_prompt": "Period-appropriate ambient sound",
+      "text_overlay": "In LOCAL LANGUAGE of the country (Latin for Rome, etc). Year + location. Or null."
     }}
   ]
 }}
 
-Generate exactly {num_scenes} scenes. Scene 1 = the HOOK (most visually dramatic moment)."""
+Generate exactly {num_clips} scenes. Scene 1 = HOOK (most dramatic)."""
 
 
 def _load_used_topics() -> list[str]:
-    """Load previously used topic titles."""
     path = config.USED_TOPICS_FILE
     if path.exists():
         with open(path) as f:
@@ -127,7 +156,6 @@ def _save_used_topics(used: list[str]):
 
 
 def _parse_json_response(raw: str) -> dict | list:
-    """Parse LLM JSON with multiple fallback strategies."""
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -152,7 +180,6 @@ def _parse_json_response(raw: str) -> dict | list:
 
 
 def _validate_topic(topic: dict) -> dict:
-    """Validate topic structure before spending money on images."""
     required = ["title", "scenes"]
     for field in required:
         if field not in topic or not topic[field]:
@@ -166,51 +193,44 @@ def _validate_topic(topic: dict) -> dict:
         raise ValueError(f"Only {len(scenes)} scenes (need at least 3)")
 
     for i, scene in enumerate(scenes):
-        if "image_prompt" not in scene or not scene["image_prompt"]:
-            raise ValueError(f"Scene {i+1}: missing image_prompt")
+        if "video_prompt" not in scene or not scene["video_prompt"]:
+            raise ValueError(f"Scene {i+1}: missing video_prompt")
 
-        prompt_words = len(scene["image_prompt"].split())
-        if prompt_words < 30:
+        prompt_words = len(scene["video_prompt"].split())
+        if prompt_words < 25:
             raise ValueError(
-                f"Scene {i+1}: image_prompt only {prompt_words} words (need 30+). "
-                f"This will produce a generic, low-quality image."
+                f"Scene {i+1}: video_prompt only {prompt_words} words (need 25+)"
             )
 
-        # Defaults
         scene.setdefault("scene_number", i + 1)
-        scene.setdefault("camera_movement", "zoom_in")
         scene.setdefault("sfx_prompt", "ambient atmosphere")
         if scene.get("text_overlay") in ("null", "none", "", "None"):
             scene["text_overlay"] = None
-
-        # Validate camera movement
-        valid_movements = {"zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down"}
-        if scene["camera_movement"] not in valid_movements:
-            scene["camera_movement"] = "zoom_in"
 
     return topic
 
 
 def generate_topic(
     force_type: str = None,
-    num_scenes: int = None,
+    num_clips: int = None,
 ) -> dict:
     """
     Generate a video topic with scene breakdown.
-
-    Args:
-        force_type: "anime" or "historical". None = random 50/50.
-        num_scenes: Number of scenes. Default from config.
-
-    Returns validated topic dict with scenes.
+    70% historical, 30% anime (unless forced).
     """
-    num_scenes = num_scenes or config.SCENES_PER_VIDEO
-    num_scenes = max(4, min(num_scenes, 15))
+    num_clips = num_clips or config.CLIPS_PER_VIDEO
+    num_clips = max(3, min(num_clips, 10))
 
     used_topics = _load_used_topics()
 
-    # Random selection: anime or historical
-    topic_type = force_type or random.choice(["anime", "historical"])
+    if force_type:
+        topic_type = force_type
+    else:
+        topic_type = random.choices(
+            ["historical", "anime"],
+            weights=[70, 30],
+            k=1,
+        )[0]
 
     client = OpenAI(
         api_key=config.DEEPSEEK_API_KEY,
@@ -220,17 +240,20 @@ def generate_topic(
     used_str = "\n".join(f"- {t}" for t in used_topics[-50:]) if used_topics else "(none)"
 
     if topic_type == "anime":
+        anime_name = random.choice(TOP_ANIME)
         user_msg = TOPIC_TEMPLATE_ANIME.format(
-            num_scenes=num_scenes,
+            anime_name=anime_name,
+            num_clips=num_clips,
             used_topics=used_str,
         )
+        logger.info(f"Selected anime: {anime_name}")
     else:
         user_msg = TOPIC_TEMPLATE_HISTORY.format(
-            num_scenes=num_scenes,
+            num_clips=num_clips,
             used_topics=used_str,
         )
 
-    logger.info(f"Generating topic: type={topic_type}, scenes={num_scenes}")
+    logger.info(f"Generating topic: type={topic_type}, clips={num_clips}")
 
     resp = client.chat.completions.create(
         model=config.DEEPSEEK_MODEL,
@@ -244,15 +267,12 @@ def generate_topic(
     )
 
     raw = resp.choices[0].message.content.strip()
-    logger.debug(f"Raw response: {raw[:500]}")
-
     topic = _parse_json_response(raw)
     if not isinstance(topic, dict):
         raise ValueError(f"Expected dict, got {type(topic)}")
 
     topic = _validate_topic(topic)
 
-    # Save to dedup
     used_topics.append(topic["title"])
     _save_used_topics(used_topics)
 
@@ -264,7 +284,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     p = argparse.ArgumentParser()
     p.add_argument("--type", choices=["anime", "historical"], default=None)
-    p.add_argument("--num-scenes", type=int, default=None)
+    p.add_argument("--num-clips", type=int, default=None)
     args = p.parse_args()
-    result = generate_topic(args.type, args.num_scenes)
+    result = generate_topic(args.type, args.num_clips)
     print(json.dumps(result, indent=2, ensure_ascii=False))
