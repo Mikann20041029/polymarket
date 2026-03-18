@@ -82,7 +82,7 @@ def run_offline(config: dict) -> None:
         load_category_stats, adjust_scores, update_stats_after_selection, save_category_stats,
     )
     from scenario.selector import load_history, select_best, record_selection
-    from prompts.video_prompt_builder import build_video_prompts_dry
+    from prompts.video_prompt_builder import build_video_prompt_dry
 
     logger = logging.getLogger("witness")
 
@@ -121,8 +121,8 @@ def run_offline(config: dict) -> None:
     stats = update_stats_after_selection(winner, stats, categories_config)
     save_category_stats(stats, CATEGORY_STATS_PATH)
 
-    # Generate video prompts (fallback, no LLM)
-    prompts = build_video_prompts_dry(winner, config)
+    # Generate video prompt (fallback, no LLM)
+    prompts = build_video_prompt_dry(winner, config)
 
     # Output results
     _print_results(winner, prompts, config)
@@ -144,7 +144,7 @@ def run_dry(config: dict) -> None:
         load_category_stats, adjust_scores, update_stats_after_selection, save_category_stats,
     )
     from scenario.selector import load_history, select_best, record_selection
-    from prompts.video_prompt_builder import build_video_prompts
+    from prompts.video_prompt_builder import build_video_prompt
 
     logger = logging.getLogger("witness")
     client = create_llm_client(config)
@@ -188,8 +188,8 @@ def run_dry(config: dict) -> None:
     stats = update_stats_after_selection(winner, stats, categories_config)
     save_category_stats(stats, CATEGORY_STATS_PATH)
 
-    # Generate video prompts via LLM
-    prompts = build_video_prompts(winner, client, config)
+    # Generate video prompt via LLM
+    prompts = build_video_prompt(winner, client, config)
 
     # Output results
     _print_results(winner, prompts, config)
@@ -222,26 +222,31 @@ def run_generate(config: dict) -> None:
 
 def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
     """Print formatted results to stdout."""
+    gen_config = config.get("generation", {})
+    duration = gen_config.get("duration_seconds", 14)
+
     print("\n" + "=" * 70)
-    print("  SELECTED SCENARIO")
+    print("  SELECTED SCENARIO (single continuous shot)")
     print("=" * 70)
     print(f"  Category:    {scenario.get('category', 'N/A')}")
     print(f"  Event:       {scenario.get('event_type', 'N/A')}")
     print(f"  POV:         {scenario.get('camera_pov', 'N/A')}")
+    print(f"  Camera:      {scenario.get('camera_movement', 'N/A')}")
     print(f"  Hook:        {scenario.get('opening_hook_type', 'N/A')}")
     print(f"  Location:    {scenario.get('location_style', 'N/A')}")
     print(f"  Time:        {scenario.get('time_of_day', 'N/A')}")
     print(f"  Weather:     {scenario.get('weather_atmosphere', 'N/A')}")
+    print(f"  Duration:    {duration}s (single clip, no cuts)")
     print()
     print(f"  Summary:")
     print(f"    {scenario.get('scenario_summary', 'N/A')}")
     print()
-    print(f"  Opening Hook:")
+    print(f"  0.0-0.5s  HOOK:")
     print(f"    {scenario.get('opening_hook_description', 'N/A')}")
-    print()
-    print(f"  Escalation:  {scenario.get('escalation_pattern', 'N/A')}")
-    print(f"  Climax:      {scenario.get('climax_description', 'N/A')}")
-    print(f"  Aftermath:   {scenario.get('aftermath_description', 'N/A')}")
+    print(f"  5.0-10.0s PEAK:")
+    print(f"    {scenario.get('peak_moment', 'N/A')}")
+    print(f"  10.0-{duration}s AFTERMATH:")
+    print(f"    {scenario.get('aftermath', 'N/A')}")
     print()
 
     # Scores
@@ -263,33 +268,28 @@ def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
     print(f"  Sound:       {scenario.get('sound_atmosphere', 'N/A')}")
     print()
 
-    # Video prompts
-    clips = prompts.get("clips", [])
-    if clips:
+    # Video prompt (single)
+    video_prompt = prompts.get("video_prompt", "")
+    sfx_prompt = prompts.get("sfx_prompt", "")
+    if video_prompt:
         print("-" * 70)
-        print("  VIDEO PROMPTS")
+        print("  VIDEO PROMPT (single continuous shot)")
         print("-" * 70)
-        for clip in clips:
-            n = clip.get("clip_number", "?")
-            print(f"\n  Clip {n}: {clip.get('description', '')}")
-            print(f"  Video: {clip.get('video_prompt', '')}")
-            print(f"  SFX:   {clip.get('sfx_prompt', '')}")
+        print(f"  {video_prompt}")
+        print()
+        print(f"  SFX: {sfx_prompt}")
         print()
 
     # Cost estimate
-    gen_config = config.get("generation", {})
     video_config = config.get("video", {})
-    n_clips = gen_config.get("clips_per_video", 6)
-    cost_per_clip = video_config.get("cost_per_clip_usd", 0.20)
-    total_video = n_clips * cost_per_clip
-    total_sfx = n_clips * 0.01
+    max_cost = video_config.get("max_cost_per_video_usd", 0.35)
     print("-" * 70)
     print("  COST ESTIMATE (if generated)")
     print("-" * 70)
-    print(f"  Video ({n_clips} clips × ${cost_per_clip:.2f}):  ${total_video:.2f}")
-    print(f"  SFX   ({n_clips} clips × $0.01):       ${total_sfx:.2f}")
-    print(f"  LLM   (topic + scoring + prompts): ~$0.003")
-    print(f"  TOTAL:                              ~${total_video + total_sfx + 0.003:.2f}")
+    print(f"  Video (1 clip, {duration}s):       model-dependent")
+    print(f"  SFX   (1 clip):               ~$0.01")
+    print(f"  LLM   (candidates + scoring): ~$0.003")
+    print(f"  Hard ceiling:                 ${max_cost:.2f} (~50 JPY)")
     print("=" * 70 + "\n")
 
 

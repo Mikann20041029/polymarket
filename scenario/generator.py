@@ -8,7 +8,13 @@ Generation order (strict):
   1. POV is fixed
   2. Opening hook is fixed
   3. Scenario is generated to fit both
-  4. Escalation/climax/aftermath are generated last
+  4. Peak/aftermath generated last
+
+Single-scene model:
+  1 video = 1 continuous clip = 10-15 seconds
+  No multi-clip. No story arc. No cuts.
+  Camera is fixed or near-fixed.
+  Anomaly visible within 0.5 seconds.
 """
 import json
 import logging
@@ -23,21 +29,31 @@ CANDIDATE_SYSTEM_PROMPT = """You are a creative director for a viral short-form 
 You create concepts for "witness-type shock footage" - vertical videos (9:16) that look like
 real footage accidentally captured by ordinary people.
 
+CRITICAL FORMAT: 1 video = 1 single continuous shot = 10-15 seconds. NO cuts, NO multi-clip, NO story.
+
 RULES:
-- Videos must feel like real phone footage of extraordinary events
-- The opening 1 second MUST contain something visually shocking or abnormal
-- No text, narration, or dialogue in the video
-- Audio: natural environment sounds + subtle SFX + quiet BGM only
+- Each video is ONE continuous 10-15 second clip from a FIXED or near-fixed camera
+- Camera does NOT move significantly. It stays in place. Natural tremor only.
+- The anomaly MUST be visible within the first 0.5 seconds of the video
+- The viewer MUST understand what's happening within 3 seconds WITHOUT thinking
+- No text, narration, dialogue, or story structure
+- Audio: natural environment sounds only
 - Target audience: global viewers (not Japan-specific)
 - If signs/text appear in the scene, use language appropriate to the location
-- NO anime, NO historical recreation - this is about "what if this happened right now"
-- Prioritize events that make viewers think "Wait, where did this happen? Is this real?"
+- NO anime, NO historical recreation
+- Prioritize "is this real?" reactions
 
-QUALITY STANDARDS:
-- The scenario must be filmable as 5-second clips (6 clips = 30 seconds)
-- Prefer distant/atmospheric shots over close-up human faces (AI renders these better)
-- Include natural motion: water, wind, debris, smoke, crowds in distance
-- Camera behavior must match the POV (shaky handheld, stable dashcam, etc.)"""
+TIME STRUCTURE (within the single 10-15s clip):
+  0.0-0.5s: Anomaly ALREADY visible in frame
+  0.5-3.0s: Viewer fully understands what's happening
+  3.0-10.0s: Event intensifies / reaches peak
+  10.0-15.0s: Aftermath or lingering moment
+
+WHAT MAKES IT WORK:
+- ONE event, ONE viewpoint, ONE continuous moment
+- No buildup needed - we're dropping into the middle of something
+- Fixed camera = more realistic (security cam, phone propped up, dashcam, mounted GoPro)
+- Simplicity = clarity = instant understanding = viral"""
 
 CANDIDATE_USER_PROMPT = """Generate exactly {count} scenario candidates.
 
@@ -49,38 +65,38 @@ CONSTRAINTS FOR THIS BATCH:
 - Categories to consider: {compatible_categories}
 - Categories to AVOID (overused recently): {avoid_categories}
 
+REMEMBER: 1 video = 1 single continuous clip of 10-15 seconds.
+Camera is FIXED or near-fixed. No cuts, no story, no multi-scene.
+
 Each candidate MUST:
-1. Have the opening hook ALREADY happening in the first frame (not building up to it)
-2. Work naturally from the given camera POV
-3. Have a distinct event_type, location, escalation, and climax from other candidates
+1. Have the anomaly ALREADY visible at 0.5 seconds (not building up to it)
+2. Be instantly understandable without thinking
+3. Work as a SINGLE continuous fixed-camera shot
+4. Have a distinct event_type, location, and mood from other candidates
 
 Return ONLY a JSON array of {count} objects with this exact structure:
 [
   {{
     "category": "<one of: natural_phenomenon, urban_anomaly, animal_encounter, maritime_anomaly, aviation_anomaly, traffic_transport, infrastructure_failure, space_sky_anomaly, realistic_whatif>",
-    "event_type": "<specific event, e.g. 'glacier_calving_tsunami'>",
-    "scenario_summary": "<2-3 sentences describing the full scenario>",
+    "event_type": "<specific event, e.g. 'glacier_calving'>",
+    "scenario_summary": "<1-2 sentences: what is happening in this single continuous shot>",
     "location_style": "<specific location feel, e.g. 'Norwegian fjord, summer afternoon'>",
     "time_of_day": "<dawn/morning/midday/afternoon/dusk/night>",
     "weather_atmosphere": "<e.g. 'overcast, humid, haze'>",
     "camera_pov": "{pov_id}",
-    "camera_movement": "<specific movement: e.g. 'handheld slight tremor, quick zoom in, then pan right'>",
+    "camera_movement": "<fixed / near-fixed with slight tremor / mounted stable>",
     "opening_hook_type": "{hook_id}",
-    "opening_hook_description": "<exactly what is visible/audible in the first 1 second>",
-    "escalation_pattern": "<how tension builds across clips 2-4>",
-    "climax_type": "<what happens at peak moment>",
-    "climax_description": "<specific visual description of the climax>",
-    "aftermath_type": "<how it ends: stunned_silence / chaos / eerie_calm / flee / damage_reveal>",
-    "aftermath_description": "<what the final clip shows>",
+    "opening_hook_description": "<exactly what is visible at 0.5 seconds>",
+    "peak_moment": "<what happens at maximum intensity (5-10s mark)>",
+    "aftermath": "<what the last few seconds show (10-15s)>",
     "visual_tags": ["<5-8 specific visual elements>"],
-    "tone_tags": ["<2-4 emotional tones: dread, awe, panic, helplessness, wonder, etc.>"],
-    "dominant_colors": ["<3-4 main colors in the scene>"],
-    "sound_atmosphere": "<ambient sound description for SFX generation>"
+    "tone_tags": ["<2-4 emotional tones>"],
+    "dominant_colors": ["<3-4 main colors>"],
+    "sound_atmosphere": "<ambient sound for this single continuous moment>"
   }}
 ]
 
-Make each candidate MAXIMALLY different from the others in this batch.
-Different locations, different events, different scales, different moods."""
+Make each candidate MAXIMALLY different from the others."""
 
 
 def generate_candidates(
@@ -192,62 +208,73 @@ def generate_candidates_dry(config: dict) -> list[dict]:
     Generate candidates without any API call (for testing structure).
 
     Returns a small set of hardcoded example candidates.
+    Single-scene format: 1 video = 1 continuous 10-15s clip.
     """
     return [
         {
             "category": "maritime_anomaly",
             "event_type": "cargo_ship_near_miss",
-            "scenario_summary": "A massive container ship drifts dangerously close to a small fishing pier in a Southeast Asian port.",
+            "scenario_summary": "A massive container ship hull fills the frame, drifting dangerously close to a small pier. Single continuous shot from dock level.",
             "location_style": "Southeast Asian commercial port",
             "time_of_day": "afternoon",
             "weather_atmosphere": "hazy, humid, overcast",
             "camera_pov": "tourist",
-            "camera_movement": "handheld panic zoom",
+            "camera_movement": "near-fixed, slight hand tremor",
             "opening_hook_type": "massive_object_too_close",
-            "opening_hook_description": "Towering ship hull fills 80% of frame, impossibly close to the pier",
-            "escalation_pattern": "ship drifts closer, ropes snap, small boats pushed aside",
-            "climax_type": "near_impact",
-            "climax_description": "Ship hull scrapes pier, wood splinters",
-            "aftermath_type": "stunned_silence",
-            "aftermath_description": "Damage trail visible, distant shouting",
-            "visual_tags": ["giant_ship", "port", "water_displacement", "pier", "scrambling_people"],
+            "opening_hook_description": "Towering ship hull fills 80% of frame at 0.5s, impossibly close to the pier",
+            "peak_moment": "Ship hull scrapes pier edge, wood splinters fly, water surges between hull and dock",
+            "aftermath": "Ship slowly drifts past, wake rocks small boats, debris floats",
+            "visual_tags": ["giant_ship_hull", "pier_wood", "water_surge", "rust_streaks", "scale_contrast"],
             "tone_tags": ["dread", "helplessness", "scale_shock"],
             "dominant_colors": ["steel_gray", "ocean_blue", "rust_orange"],
-            "sound_atmosphere": "harbor ambience, metal groaning, water slapping",
+            "sound_atmosphere": "deep metal groaning, water churning, wood cracking",
         },
         {
             "category": "natural_phenomenon",
             "event_type": "highway_sinkhole",
-            "scenario_summary": "A massive sinkhole opens under a highway, swallowing vehicles in real time from a dashcam perspective.",
+            "scenario_summary": "Road surface ahead cracks and sinks in real time, swallowing the front car. Single continuous dashcam shot.",
             "location_style": "American suburban highway",
             "time_of_day": "morning",
             "weather_atmosphere": "clear, bright",
             "camera_pov": "dashcam",
-            "camera_movement": "fixed dashcam, slight vibration",
+            "camera_movement": "fixed dashcam angle",
             "opening_hook_type": "collapse_already_started",
-            "opening_hook_description": "Road surface ahead is cracking and sinking, front car's rear wheels are dropping",
-            "escalation_pattern": "hole expands, second car tilts, cracks spread laterally",
-            "climax_type": "full_collapse",
-            "climax_description": "Road section drops, car half-falls into hole",
-            "aftermath_type": "chaos",
-            "aftermath_description": "Emergency stop, hazard lights, honking chain",
-            "visual_tags": ["sinkhole", "highway", "cracking_asphalt", "tilting_car", "dust_cloud"],
+            "opening_hook_description": "Road surface visibly cracked and sinking at 0.5s, front car tilting into depression",
+            "peak_moment": "Road section drops fully, car slides into hole, dust cloud erupts",
+            "aftermath": "Dust settles, hole edge visible, car alarms in distance",
+            "visual_tags": ["cracking_asphalt", "sinking_road", "tilting_car", "dust_cloud", "cracks_spreading"],
             "tone_tags": ["shock", "disbelief"],
             "dominant_colors": ["asphalt_gray", "dust_brown", "sky_blue"],
-            "sound_atmosphere": "engine hum, cracking concrete, car alarms",
+            "sound_atmosphere": "cracking concrete, grinding earth, distant car alarms",
+        },
+        {
+            "category": "aviation_anomaly",
+            "event_type": "low_flyover_residential",
+            "scenario_summary": "Massive cargo plane belly fills the sky directly overhead a residential street. Single continuous shot looking up.",
+            "location_style": "South American residential street near airport",
+            "time_of_day": "afternoon",
+            "weather_atmosphere": "clear, sunny, light wind",
+            "camera_pov": "street",
+            "camera_movement": "fixed vertical phone, looking up",
+            "opening_hook_type": "massive_object_too_close",
+            "opening_hook_description": "Giant aircraft underside already fills upper 70% of frame at 0.5s, shadow covers everything",
+            "peak_moment": "Plane passes directly overhead, deafening roar, tree branches whip violently",
+            "aftermath": "Plane recedes, shadow lifts, leaves and debris settle from the air",
+            "visual_tags": ["plane_belly", "shadow_coverage", "tree_whipping", "residential_street", "scale_shock"],
+            "tone_tags": ["awe", "fear", "disbelief"],
+            "dominant_colors": ["aircraft_white", "shadow_dark", "sky_blue"],
+            "sound_atmosphere": "overwhelming jet roar, wind blast, rattling windows",
         },
     ]
 
 
 def _parse_candidates_json(raw: str) -> list[dict]:
     """Extract JSON array from LLM response."""
-    # Try direct parse
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from markdown code block
     if "```json" in raw:
         raw = raw.split("```json")[1].split("```")[0].strip()
     elif "```" in raw:
@@ -276,7 +303,7 @@ def _get_overused_categories(
     for cat_id, cat_stats in stats.items():
         actual_ratio = cat_stats.get("count", 0) / total
         target = categories_config.get(cat_id, {}).get("target_ratio", 0.11)
-        if actual_ratio > target + 0.05:  # 5% tolerance
+        if actual_ratio > target + 0.05:
             overused.append(cat_id)
 
     return overused

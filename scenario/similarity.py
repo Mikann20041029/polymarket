@@ -81,19 +81,21 @@ def compute_similarity(candidate: dict, existing: dict, weights: dict) -> float:
         candidate.get("opening_hook_type", ""), existing.get("opening_hook_type", "")
     )
 
-    # escalation_pattern: partial match
-    score += weights.get("escalation_pattern", 0.10) * _partial_match(
-        candidate.get("escalation_pattern", ""), existing.get("escalation_pattern", "")
+    # peak_moment: keyword similarity (replaces escalation_pattern + climax_type)
+    score += weights.get("escalation_pattern", 0.10) * _keyword_similarity(
+        candidate.get("peak_moment", ""), existing.get("peak_moment", "")
     )
 
-    # climax_type: partial match
-    score += weights.get("climax_type", 0.10) * _partial_match(
-        candidate.get("climax_type", ""), existing.get("climax_type", "")
+    # climax_type: kept for backward compat with old history entries
+    score += weights.get("climax_type", 0.10) * _keyword_similarity(
+        candidate.get("peak_moment", candidate.get("climax_type", "")),
+        existing.get("peak_moment", existing.get("climax_type", "")),
     )
 
-    # aftermath_type: exact match
-    score += weights.get("aftermath_type", 0.05) * _exact_match(
-        candidate.get("aftermath_type", ""), existing.get("aftermath_type", "")
+    # aftermath: keyword similarity
+    score += weights.get("aftermath_type", 0.05) * _keyword_similarity(
+        candidate.get("aftermath", candidate.get("aftermath_type", "")),
+        existing.get("aftermath", existing.get("aftermath_type", "")),
     )
 
     # visual_tags: jaccard

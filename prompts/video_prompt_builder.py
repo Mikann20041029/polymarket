@@ -1,8 +1,9 @@
 """
-Convert a selected scenario into per-clip video generation prompts.
+Convert a selected scenario into a SINGLE video generation prompt.
 
-Each clip prompt is optimized for text-to-video models (Wan 2.1, Runway, etc.).
-Also generates SFX prompts for each clip.
+1 video = 1 continuous clip = 10-15 seconds.
+No multi-clip. No story. Fixed camera.
+Also generates a single SFX prompt.
 """
 import json
 import logging
@@ -10,90 +11,83 @@ import logging
 logger = logging.getLogger(__name__)
 
 PROMPT_SYSTEM = """You are an expert at writing text-to-video prompts for AI video generation models.
-You convert scenario descriptions into precise, per-clip prompts.
+You convert scenario descriptions into a SINGLE precise video prompt.
 
 RULES:
-- Each clip is exactly 5 seconds of footage
+- ONE continuous clip, 10-15 seconds, NO cuts
 - Format: 9:16 vertical (phone recording)
-- Every prompt MUST start with "Photorealistic video footage of..."
-- Include: camera angle, camera movement, lighting, weather, motion elements
-- Describe what is VISIBLE and MOVING, not abstract concepts
-- Use specific sensory details: colors, textures, materials, atmospheric effects
-- Camera behavior must match the POV style (handheld shake, dashcam stability, etc.)
-- NO text overlays, NO narration, NO dialogue in prompts
-- Clip 1 = THE HOOK (most visually shocking moment, the anomaly is ALREADY visible)
-- Clips 2-4 = ESCALATION (situation worsens progressively)
-- Clips 5-6 = CLIMAX + AFTERMATH
-- Each prompt must be 60-100 words for maximum quality
+- Prompt MUST start with "Photorealistic video footage of..."
+- Camera is FIXED or near-fixed (natural tremor only, no panning/tracking)
+- The anomaly MUST be visible from the very first frame
+- Include: camera angle, lighting, weather, motion elements, atmospheric effects
+- Describe what is VISIBLE and MOVING throughout the entire 10-15 seconds
+- Use specific sensory details: colors, textures, materials
+- NO text overlays, NO narration, NO dialogue
+- Prompt must be 80-150 words for maximum quality
 - Include motion keywords: "moving", "flowing", "shaking", "falling", "rushing"
-- Include atmosphere: smoke, dust, mist, spray, embers, debris particles"""
+- Include atmosphere: smoke, dust, mist, spray, debris particles
+- Describe the PROGRESSION within the single shot:
+  * What's visible immediately (frame 1)
+  * How it intensifies over 5-10 seconds
+  * What the final seconds look like"""
 
-PROMPT_USER = """Convert this scenario into {clip_count} clip prompts (5 seconds each).
+PROMPT_USER = """Convert this scenario into ONE single video prompt (10-15 second continuous shot).
 
 SCENARIO:
 {scenario_json}
 
 Return ONLY a JSON object with this exact structure:
 {{
-  "clips": [
-    {{
-      "clip_number": 1,
-      "video_prompt": "Photorealistic video footage of...",
-      "sfx_prompt": "<ambient sound for this specific clip, 10-20 words>",
-      "description": "<brief human-readable description of what happens>"
-    }},
-    ...
-  ],
-  "total_duration_seconds": {total_duration}
+  "video_prompt": "Photorealistic video footage of...",
+  "sfx_prompt": "<ambient/environmental sound for this scene, 15-25 words>",
+  "duration_seconds": {duration},
+  "description": "<brief human-readable summary of the shot>"
 }}
 
 CRITICAL:
-- Clip 1 MUST open with the hook already in progress: {hook_description}
-- Camera POV: {pov} with traits: {pov_traits}
-- Maintain visual continuity between clips (same location, lighting, weather)
-- Each prompt 60-100 words minimum"""
+- ONE continuous shot, NO cuts, NO scene changes
+- Camera POV: {pov} - {pov_traits}
+- Camera is FIXED or near-fixed (minimal movement)
+- Anomaly visible from FIRST FRAME: {hook_description}
+- Peak moment at 5-10s: {peak_moment}
+- Final seconds: {aftermath}
+- The prompt must describe the ENTIRE 10-15 second progression in one paragraph"""
 
 
-def build_video_prompts(
+def build_video_prompt(
     scenario: dict,
     llm_client,
     config: dict,
 ) -> dict:
     """
-    Generate per-clip video and SFX prompts from a scenario.
+    Generate a single video prompt from a scenario.
 
-    Args:
-        scenario: selected scenario dict
-        llm_client: OpenAI-compatible client
-        config: full config dict
-
-    Returns:
-        dict with 'clips' list and metadata
+    Returns dict with video_prompt, sfx_prompt, duration_seconds, description.
     """
     gen_config = config.get("generation", {})
     llm_config = config.get("llm", {})
+    duration = gen_config.get("duration_seconds", 14)
 
-    clip_count = gen_config.get("clips_per_video", 6)
-    clip_duration = gen_config.get("clip_duration_seconds", 5)
-    total_duration = clip_count * clip_duration
-
-    # Load POV traits
     povs = config.get("camera_povs", {})
     pov_id = scenario.get("camera_pov", "tourist")
     pov_cfg = povs.get(pov_id, {})
 
     scenario_json = json.dumps({
         k: v for k, v in scenario.items()
-        if not k.startswith("_") and k not in ("buzz_score", "buzz_total", "adjusted_score", "category_bonus", "buzz_note")
+        if not k.startswith("_") and k not in (
+            "buzz_score", "buzz_total", "adjusted_score",
+            "category_bonus", "buzz_note",
+        )
     }, indent=2)
 
     prompt = PROMPT_USER.format(
-        clip_count=clip_count,
         scenario_json=scenario_json,
-        total_duration=total_duration,
-        hook_description=scenario.get("opening_hook_description", ""),
+        duration=duration,
         pov=pov_id,
-        pov_traits=pov_cfg.get("camera_traits", "handheld phone camera"),
+        pov_traits=pov_cfg.get("camera_traits", "fixed camera"),
+        hook_description=scenario.get("opening_hook_description", ""),
+        peak_moment=scenario.get("peak_moment", ""),
+        aftermath=scenario.get("aftermath", ""),
     )
 
     try:
@@ -103,79 +97,58 @@ def build_video_prompts(
                 {"role": "system", "content": PROMPT_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=llm_config.get("max_tokens", 8192),
+            max_tokens=llm_config.get("max_tokens", 4096),
             temperature=0.7,
         )
         raw = response.choices[0].message.content.strip()
         result = _parse_prompt_json(raw)
 
-        if result and "clips" in result:
-            # Validate clip count
-            if len(result["clips"]) != clip_count:
-                logger.warning(
-                    "Expected %d clips, got %d", clip_count, len(result["clips"])
-                )
+        if result and "video_prompt" in result:
+            result.setdefault("duration_seconds", duration)
             return result
 
     except Exception as e:
         logger.error("Prompt generation failed: %s", e)
 
-    # Fallback: generate simple prompts without LLM
-    return build_video_prompts_fallback(scenario, config)
+    return build_video_prompt_fallback(scenario, config)
 
 
-def build_video_prompts_fallback(scenario: dict, config: dict) -> dict:
-    """Generate basic prompts without LLM (emergency fallback)."""
+def build_video_prompt_fallback(scenario: dict, config: dict) -> dict:
+    """Generate a single prompt without LLM (emergency fallback)."""
     gen_config = config.get("generation", {})
-    clip_count = gen_config.get("clips_per_video", 6)
+    duration = gen_config.get("duration_seconds", 14)
 
-    pov = scenario.get("camera_pov", "handheld")
+    pov = scenario.get("camera_pov", "tourist")
     povs = config.get("camera_povs", {})
-    pov_traits = povs.get(pov, {}).get("camera_traits", "handheld phone camera")
+    pov_traits = povs.get(pov, {}).get("camera_traits", "fixed camera")
     location = scenario.get("location_style", "urban area")
     weather = scenario.get("weather_atmosphere", "clear day")
     hook = scenario.get("opening_hook_description", "anomaly visible")
-    escalation = scenario.get("escalation_pattern", "situation worsens")
-    climax = scenario.get("climax_description", "peak moment")
-    aftermath = scenario.get("aftermath_description", "aftermath visible")
+    peak = scenario.get("peak_moment", "event intensifies")
+    aftermath = scenario.get("aftermath", "aftermath visible")
     sound = scenario.get("sound_atmosphere", "ambient atmosphere")
 
-    base = (
+    video_prompt = (
         f"Photorealistic video footage, {pov_traits}, "
-        f"shot in {location}, {weather}, 9:16 vertical phone recording"
+        f"shot in {location}, {weather}, 9:16 vertical phone recording. "
+        f"Fixed camera position, single continuous {duration}-second shot. "
+        f"From the very first frame: {hook}. "
+        f"Over the next several seconds the event intensifies: {peak}. "
+        f"In the final moments: {aftermath}. "
+        f"Natural lighting, atmospheric particles visible, realistic motion throughout."
     )
 
-    clips = []
-    for i in range(clip_count):
-        if i == 0:
-            desc = f"HOOK: {hook}"
-            vprompt = f"{base}. {hook}. Camera reacts with slight shake. Dramatic natural lighting."
-        elif i < clip_count - 2:
-            desc = f"ESCALATION {i}: {escalation}"
-            vprompt = f"{base}. {escalation}. Continuous motion, debris/particles in air. Tension building."
-        elif i == clip_count - 2:
-            desc = f"CLIMAX: {climax}"
-            vprompt = f"{base}. {climax}. Maximum intensity, dramatic lighting change."
-        else:
-            desc = f"AFTERMATH: {aftermath}"
-            vprompt = f"{base}. {aftermath}. Camera slowly stabilizes. Eerie atmosphere."
-
-        clips.append({
-            "clip_number": i + 1,
-            "video_prompt": vprompt,
-            "sfx_prompt": f"{sound}, {'intense' if i < clip_count - 1 else 'fading'} atmosphere",
-            "description": desc,
-        })
-
     return {
-        "clips": clips,
-        "total_duration_seconds": clip_count * 5,
+        "video_prompt": video_prompt,
+        "sfx_prompt": f"{sound}, continuous natural ambience, {duration} seconds",
+        "duration_seconds": duration,
+        "description": scenario.get("scenario_summary", ""),
     }
 
 
-def build_video_prompts_dry(scenario: dict, config: dict) -> dict:
-    """Dry-run version: generate prompts without any API call."""
-    return build_video_prompts_fallback(scenario, config)
+def build_video_prompt_dry(scenario: dict, config: dict) -> dict:
+    """Dry-run version: no API call."""
+    return build_video_prompt_fallback(scenario, config)
 
 
 def _parse_prompt_json(raw: str) -> dict | None:
