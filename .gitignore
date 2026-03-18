@@ -10,3 +10,6 @@ __pycache__/
 !assets/**/*.png
 !assets/**/*.jpg
 data/used_hacks.json
+data/used_topics.json
+data/history.json
+data/category_stats.json

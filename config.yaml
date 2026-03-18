@@ -1,0 +1,240 @@
+# Witness-type Shock Video Generation System
+# All settings for scenario generation, scoring, and filtering
+
+# ── Generation ───────────────────────────────────────────
+generation:
+  candidates_per_template: 3       # scenarios per hook template
+  min_hook_templates: 10           # buzz structure templates per run
+  min_total_candidates: 30         # minimum candidates before filtering
+  clips_per_video: 6              # 5-second clips per video
+  clip_duration_seconds: 5
+  target_duration_seconds: 30      # 30-45s target
+  max_duration_seconds: 45
+
+# ── LLM ──────────────────────────────────────────────────
+llm:
+  provider: "deepseek"
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com"
+  max_tokens: 8192
+  temperature: 0.9                 # high creativity for candidates
+  scoring_temperature: 0.3         # low randomness for scoring
+
+# ── Similarity Filter ────────────────────────────────────
+similarity:
+  threshold: 0.45                  # above this = too similar, reject
+  history_lookback: 50             # compare against last N videos
+  hard_filters:
+    same_event_type_last_n: 5      # no same event_type in last 5
+    same_pov_last_n: 3             # no same camera_pov in last 3
+    same_hook_last_n: 3            # no same opening_hook in last 3
+    same_category_max_in_last_n: 3 # max times a category appears in last 10
+    same_category_window: 10
+  weights:
+    event_type: 0.15
+    scenario_summary: 0.15
+    location_style: 0.08
+    camera_pov: 0.12
+    opening_hook_type: 0.15
+    escalation_pattern: 0.10
+    climax_type: 0.10
+    aftermath_type: 0.05
+    visual_tags: 0.05
+    tone_tags: 0.05
+
+# ── Buzz Scoring ─────────────────────────────────────────
+scoring:
+  min_total_score: 45              # out of 70, below = reject
+  min_hook_score: 7                # first_second_shock minimum (out of 10)
+  criteria:
+    - name: "first_second_shock"
+      weight: 1
+      description: "Does the first frame make viewers stop scrolling?"
+    - name: "instant_clarity"
+      weight: 1
+      description: "Can viewers understand what's happening within 1 second?"
+    - name: "scale_impact"
+      weight: 1
+      description: "Is the scale dramatic - giant objects, vast phenomena, human contrast?"
+    - name: "realism_potential"
+      weight: 1
+      description: "Can current AI video models render this convincingly?"
+    - name: "curiosity_gap"
+      weight: 1
+      description: "Will viewers wonder 'where is this?' or 'is this real?'"
+    - name: "uniqueness"
+      weight: 1
+      description: "Is this unlike anything commonly seen on YouTube/TikTok?"
+    - name: "replay_potential"
+      weight: 1
+      description: "Will viewers want to watch again or show someone?"
+
+# ── Category Balance ─────────────────────────────────────
+categories:
+  natural_phenomenon:
+    label: "Natural Phenomenon"
+    target_ratio: 0.12
+    examples: ["earthquake", "tsunami", "volcanic eruption", "sinkhole", "avalanche", "waterspout"]
+  urban_anomaly:
+    label: "Urban Anomaly"
+    target_ratio: 0.12
+    examples: ["crane collapse", "dust devil in city", "building sway", "gas explosion aftermath"]
+  animal_encounter:
+    label: "Animal Encounter"
+    target_ratio: 0.11
+    examples: ["bear charge", "shark near-miss", "elephant confrontation", "whale breach"]
+  maritime_anomaly:
+    label: "Maritime Anomaly"
+    target_ratio: 0.12
+    examples: ["ship near-miss", "rogue wave", "whirlpool formation", "port accident"]
+  aviation_anomaly:
+    label: "Aviation Anomaly"
+    target_ratio: 0.11
+    examples: ["low flyover", "emergency landing", "near-miss", "cargo drop"]
+  traffic_transport:
+    label: "Traffic & Transport"
+    target_ratio: 0.11
+    examples: ["road collapse", "flash flood on highway", "train derailment", "tunnel flood"]
+  infrastructure_failure:
+    label: "Infrastructure Failure"
+    target_ratio: 0.10
+    examples: ["dam overflow", "bridge cable snap", "tunnel collapse", "power grid failure"]
+  space_sky_anomaly:
+    label: "Space & Sky Anomaly"
+    target_ratio: 0.10
+    examples: ["meteor fireball", "unexplained lights", "aurora anomaly", "atmospheric phenomenon"]
+  realistic_whatif:
+    label: "Realistic What-If"
+    target_ratio: 0.11
+    examples: ["rogue wave hits restaurant", "ice shelf collapse near boat", "sinkhole under building"]
+
+# ── Camera POVs ──────────────────────────────────────────
+camera_povs:
+  balcony:
+    label: "Balcony / Rooftop"
+    description: "Elevated residential viewpoint, looking out over city/landscape"
+    compatible_categories: ["urban_anomaly", "natural_phenomenon", "aviation_anomaly", "space_sky_anomaly"]
+    camera_traits: "slightly shaky handheld, zooming in, ambient room sounds"
+  street:
+    label: "Street / Pedestrian"
+    description: "Ground-level walking through urban area"
+    compatible_categories: ["urban_anomaly", "natural_phenomenon", "aviation_anomaly", "infrastructure_failure"]
+    camera_traits: "vertical phone, quick pan, footsteps, crowd murmur"
+  dashcam:
+    label: "Car Dashcam / Interior"
+    description: "Dashboard or passenger view inside moving vehicle"
+    compatible_categories: ["traffic_transport", "natural_phenomenon", "infrastructure_failure", "aviation_anomaly"]
+    camera_traits: "fixed dashcam angle, engine hum, radio static, sudden brake"
+  boat:
+    label: "Boat / Ship Deck"
+    description: "View from small boat or ship deck on water"
+    compatible_categories: ["maritime_anomaly", "animal_encounter", "natural_phenomenon"]
+    camera_traits: "constant sway, water splashes on lens, wind noise, creaking hull"
+  drone:
+    label: "Drone / Aerial"
+    description: "High-angle aerial view, stable but distant"
+    compatible_categories: ["natural_phenomenon", "urban_anomaly", "infrastructure_failure", "maritime_anomaly"]
+    camera_traits: "smooth movement, wide angle, propeller hum faintly, high altitude wind"
+  tourist:
+    label: "Tourist / Bystander"
+    description: "Casual phone recording by someone sightseeing"
+    compatible_categories: ["natural_phenomenon", "urban_anomaly", "animal_encounter", "maritime_anomaly", "realistic_whatif"]
+    camera_traits: "vertical phone, sudden zoom, gasps, pointing, shaky when panicking"
+  mountain:
+    label: "Mountain / Hiking Trail"
+    description: "View from hiking path, mountain road, or campsite"
+    compatible_categories: ["natural_phenomenon", "animal_encounter", "traffic_transport"]
+    camera_traits: "heavy breathing, crunching gravel, wind, wildlife sounds"
+  airport:
+    label: "Airport Vicinity"
+    description: "Near runway, terminal window, or airport perimeter fence"
+    compatible_categories: ["aviation_anomaly"]
+    camera_traits: "jet engine roar, chain-link fence rattle, announcements in background"
+  underwater_surface:
+    label: "Water Surface / Kayak / Swim"
+    description: "At water level, partially submerged perspective"
+    compatible_categories: ["maritime_anomaly", "animal_encounter", "natural_phenomenon"]
+    camera_traits: "water on lens, bobbing motion, muffled underwater sounds, splashing"
+  interior:
+    label: "Indoor / Window View"
+    description: "Looking out from inside a building, office, restaurant"
+    compatible_categories: ["urban_anomaly", "natural_phenomenon", "infrastructure_failure", "realistic_whatif", "space_sky_anomaly"]
+    camera_traits: "glass reflection, muffled exterior sounds, interior ambient, sudden silence"
+
+# ── Hook Templates ───────────────────────────────────────
+# These are "buzz structure templates" - the FIRST thing decided before scenario
+hook_templates:
+  - id: "massive_object_too_close"
+    label: "Massive Object Already Too Close"
+    description: "Frame opens with a giant object/entity filling 60-80% of frame, impossibly close"
+    first_frame: "Giant object dominates the frame, dwarfing everything else"
+    min_shock_score: 8
+
+  - id: "collapse_already_started"
+    label: "Collapse Already In Progress"
+    description: "Something massive is already crumbling/falling/breaking when video starts"
+    first_frame: "Debris falling, structure tilting, ground splitting - mid-event"
+    min_shock_score: 8
+
+  - id: "fleeing_pov"
+    label: "Running Away From Something"
+    description: "Camera is already in motion, person clearly fleeing from danger behind"
+    first_frame: "Bouncing camera, heavy breathing, danger visible behind/reflected"
+    min_shock_score: 7
+
+  - id: "impossible_sky"
+    label: "Something Wrong in the Sky"
+    description: "Camera looks up and something impossible/terrifying is in the sky"
+    first_frame: "Sky filled with anomalous object, light, or formation"
+    min_shock_score: 7
+
+  - id: "water_wrong"
+    label: "Water Behaving Impossibly"
+    description: "Water is doing something it shouldn't - rising, spinning, retreating, surging"
+    first_frame: "Water mass moving unnaturally, defying expectations"
+    min_shock_score: 7
+
+  - id: "sound_before_sight"
+    label: "Terrifying Sound Then Reveal"
+    description: "Opens with alarming audio (rumble, roar, siren) before camera swings to source"
+    first_frame: "Normal view but abnormal audio dominates, then quick pan to source"
+    min_shock_score: 7
+
+  - id: "scale_reveal"
+    label: "Sudden Scale Revelation"
+    description: "Something ordinary is revealed to be impossibly large or close via size comparison"
+    first_frame: "Familiar object then a human/car enters frame showing insane scale contrast"
+    min_shock_score: 8
+
+  - id: "calm_then_crack"
+    label: "Perfect Calm Broken by Anomaly"
+    description: "Peaceful scenic shot where ONE wrong detail appears and grows"
+    first_frame: "Beautiful but one visible anomaly - crack, shadow, movement that shouldn't be there"
+    min_shock_score: 6
+
+  - id: "crowd_panic"
+    label: "Crowd Already Reacting"
+    description: "People are already screaming/running/pointing when recording starts"
+    first_frame: "Panicked crowd visible, camera searches for cause, finds it"
+    min_shock_score: 7
+
+  - id: "animal_proximity"
+    label: "Dangerous Animal Impossibly Close"
+    description: "Dangerous animal is already within striking distance when video starts"
+    first_frame: "Animal fills significant portion of frame, immediate threat apparent"
+    min_shock_score: 8
+
+# ── Dry Run ──────────────────────────────────────────────
+dry_run: true  # NEVER auto-generate paid content. Set false only after explicit approval.
+
+# ── Video Generation (locked behind dry_run) ─────────────
+video:
+  model: "wan-2.1"
+  resolution: "480p"
+  cost_per_clip_usd: 0.20
+  max_cost_per_video_usd: 3.00   # hard ceiling
+
+# ── Output ───────────────────────────────────────────────
+output:
+  directory: "output"
+  filename_prefix: "witness"
