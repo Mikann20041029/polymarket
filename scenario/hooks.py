@@ -54,23 +54,37 @@ def validate_hook_strength(
     """
     Quick pre-filter: does the scenario's hook description sound strong?
 
-    This is a lightweight check before full LLM scoring.
-    Rejects scenarios where the opening_hook_description is too vague.
+    Enforces the 0.5-second rule: the anomaly MUST be visible immediately.
+    Rejects scenarios where the opening is too vague, delayed, or requires buildup.
     """
     hook_desc = scenario.get("opening_hook_description", "")
     if not hook_desc or len(hook_desc) < 20:
         return False
 
-    # Weak indicators - phrases that suggest a slow/boring opening
+    hook_lower = hook_desc.lower()
+
+    # Weak indicators - phrases that suggest delayed/slow opening
     weak_phrases = [
         "slowly", "gradually", "begins to", "starts to",
         "something seems", "might be", "could be", "appears to be",
         "in the distance a small", "barely visible",
-        "nothing unusual", "normal day",
+        "nothing unusual", "normal day", "quiet", "peaceful",
+        "will appear", "about to", "is going to", "soon",
+        "building up", "growing", "emerging",
     ]
-    hook_lower = hook_desc.lower()
     for phrase in weak_phrases:
         if phrase in hook_lower:
             return False
+
+    # Strong indicators - anomaly already present
+    strong_phrases = [
+        "already", "fills", "visible", "dominate", "covering",
+        "cracking", "falling", "collapsing", "surging", "flooding",
+        "impossibly close", "too close", "overhead", "directly",
+    ]
+    has_strong = any(p in hook_lower for p in strong_phrases)
+
+    if not has_strong and len(hook_desc) < 40:
+        return False
 
     return True

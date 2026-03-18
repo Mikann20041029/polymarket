@@ -12,21 +12,29 @@ logger = logging.getLogger(__name__)
 SCORING_SYSTEM_PROMPT = """You are a viral short-form video scoring expert.
 You evaluate scenario concepts for their potential to go viral on YouTube Shorts / TikTok.
 
+IMPORTANT CONTEXT: Each video is a SINGLE continuous 10-15 second clip.
+Fixed camera. No cuts. No story. Anomaly visible within 0.5 seconds.
+
 Target audience: global viewers who stop scrolling for shocking, realistic-looking witness footage.
 
 Score each scenario on these 7 criteria (1-10 scale):
 
-1. first_second_shock: Does the opening frame make viewers STOP scrolling instantly?
+1. first_second_shock: Does the first frame (0.5s) make viewers STOP scrolling?
    10 = impossible to scroll past  |  5 = interesting but not stopping  |  1 = boring opening
 
-2. instant_clarity: Can viewers understand what's happening within 1 second, no text needed?
-   10 = crystal clear instantly  |  5 = takes 2-3 seconds  |  1 = confusing
+2. instant_clarity: Can viewers understand what's happening WITHOUT THINKING?
+   10 = zero thought needed, anyone in the world gets it instantly
+   5 = takes 2-3 seconds or requires some context
+   1 = confusing, need to think about what's happening
+   NOTE: If it requires any cultural knowledge, explanation, or context = max 5
 
 3. scale_impact: Is the scale dramatic? Giant objects, vast phenomena, human-vs-nature contrast?
    10 = jaw-dropping scale  |  5 = moderate  |  1 = small/mundane
 
-4. realism_potential: Can current AI video generation (5-second clips, 480-720p) render this convincingly?
-   10 = mostly distant/atmospheric, easy to fake  |  5 = some tricky elements  |  1 = requires perfect human faces/physics
+4. realism_potential: Can a SINGLE 10-15s AI video clip render this as one continuous shot?
+   10 = mostly atmospheric/distant, minimal complex motion, fixed camera works perfectly
+   5 = some tricky elements but possible
+   1 = requires perfect human faces, complex physics, or camera movement
 
 5. curiosity_gap: Will viewers wonder "Where is this?" or "Is this real?"
    10 = absolutely  |  5 = somewhat  |  1 = obviously fake/uninteresting
@@ -38,7 +46,8 @@ Score each scenario on these 7 criteria (1-10 scale):
    10 = must share  |  5 = might rewatch  |  1 = one and done
 
 IMPORTANT: Be strict. Most scenarios should score 5-7. Only truly exceptional concepts get 9-10.
-A score of 8+ on first_second_shock means the opening is genuinely shocking."""
+A score of 8+ on first_second_shock means the opening is genuinely shocking.
+instant_clarity of 7+ means a 5-year-old could understand what's happening."""
 
 SCORING_USER_PROMPT = """Score these scenario candidates. Return ONLY a JSON array.
 
@@ -184,10 +193,13 @@ def score_candidates_heuristic(candidates: list[dict]) -> list[dict]:
         vtags = set(t.lower() for t in c.get("visual_tags", []))
         scores["scale_impact"] = 8 if vtags & big_tags else 6
 
-        # realism_potential: penalize close-up human action
+        # realism_potential: single continuous clip, fixed camera
         pov = c.get("camera_pov", "")
-        if pov in ("drone", "balcony", "interior"):
-            scores["realism_potential"] = 8  # distant = easier to render
+        cam = c.get("camera_movement", "").lower()
+        if pov in ("drone", "balcony", "interior", "dashcam"):
+            scores["realism_potential"] = 8  # distant/fixed = easier to render
+        elif "fixed" in cam or "mounted" in cam:
+            scores["realism_potential"] = 7
         elif pov in ("street", "tourist"):
             scores["realism_potential"] = 6
         else:
@@ -221,11 +233,14 @@ def filter_by_score(
     scoring_config = config.get("scoring", {})
     min_total = scoring_config.get("min_total_score", 45)
     min_hook = scoring_config.get("min_hook_score", 7)
+    min_clarity = scoring_config.get("min_clarity_score", 7)
 
     passed = []
     for c in candidates:
         total = c.get("buzz_total", 0)
-        hook_score = c.get("buzz_score", {}).get("first_second_shock", 0)
+        scores = c.get("buzz_score", {})
+        hook_score = scores.get("first_second_shock", 0)
+        clarity_score = scores.get("instant_clarity", 0)
 
         if total < min_total:
             c["_rejected"] = True
@@ -234,6 +249,10 @@ def filter_by_score(
         if hook_score < min_hook:
             c["_rejected"] = True
             c["_reject_reason"] = f"first_second_shock {hook_score} < {min_hook}"
+            continue
+        if clarity_score < min_clarity:
+            c["_rejected"] = True
+            c["_reject_reason"] = f"instant_clarity {clarity_score} < {min_clarity}"
             continue
 
         passed.append(c)

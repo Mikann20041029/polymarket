@@ -2,14 +2,27 @@
 # All settings for scenario generation, scoring, and filtering
 
 # ── Generation ───────────────────────────────────────────
+# 1 video = 1 scene = 1 single continuous clip (NO multi-clip)
 generation:
   candidates_per_template: 3       # scenarios per hook template
   min_hook_templates: 10           # buzz structure templates per run
   min_total_candidates: 30         # minimum candidates before filtering
-  clips_per_video: 6              # 5-second clips per video
-  clip_duration_seconds: 5
-  target_duration_seconds: 30      # 30-45s target
-  max_duration_seconds: 45
+  duration_seconds: 14             # single clip length (10-15s range)
+  min_duration_seconds: 10
+  max_duration_seconds: 15
+
+# ── Scene Time Structure ────────────────────────────────
+# All within ONE continuous clip. No cuts.
+# 0.0-1.0s : anomaly already visible
+# 1.0-5.0s : viewer understands what's happening
+# 5.0-10.0s: peak intensity
+# 10.0-15.0s: aftermath / lingering余韻
+time_structure:
+  anomaly_visible_by: 0.5          # seconds - anomaly MUST be on screen
+  understanding_by: 3.0            # seconds - situation fully clear
+  peak_start: 5.0
+  peak_end: 10.0
+  aftermath_start: 10.0
 
 # ── LLM ──────────────────────────────────────────────────
 llm:
@@ -46,19 +59,20 @@ similarity:
 scoring:
   min_total_score: 45              # out of 70, below = reject
   min_hook_score: 7                # first_second_shock minimum (out of 10)
+  min_clarity_score: 7             # instant_clarity minimum - "think to understand" = reject
   criteria:
     - name: "first_second_shock"
       weight: 1
-      description: "Does the first frame make viewers stop scrolling?"
+      description: "Does the first frame (0.5s) make viewers stop scrolling?"
     - name: "instant_clarity"
       weight: 1
-      description: "Can viewers understand what's happening within 1 second?"
+      description: "Can viewers understand what's happening without thinking? No ambiguity."
     - name: "scale_impact"
       weight: 1
       description: "Is the scale dramatic - giant objects, vast phenomena, human contrast?"
     - name: "realism_potential"
       weight: 1
-      description: "Can current AI video models render this convincingly?"
+      description: "Can a 10-15s AI video clip render this as one continuous shot convincingly?"
     - name: "curiosity_gap"
       weight: 1
       description: "Will viewers wonder 'where is this?' or 'is this real?'"
@@ -112,54 +126,54 @@ categories:
 camera_povs:
   balcony:
     label: "Balcony / Rooftop"
-    description: "Elevated residential viewpoint, looking out over city/landscape"
+    description: "Fixed elevated viewpoint looking out over city/landscape"
     compatible_categories: ["urban_anomaly", "natural_phenomenon", "aviation_anomaly", "space_sky_anomaly"]
-    camera_traits: "slightly shaky handheld, zooming in, ambient room sounds"
+    camera_traits: "fixed or near-fixed, slight handheld tremor, ambient room sounds"
   street:
     label: "Street / Pedestrian"
-    description: "Ground-level walking through urban area"
+    description: "Ground-level, person standing still or stopped, phone held up"
     compatible_categories: ["urban_anomaly", "natural_phenomenon", "aviation_anomaly", "infrastructure_failure"]
-    camera_traits: "vertical phone, quick pan, footsteps, crowd murmur"
+    camera_traits: "fixed vertical phone, minimal movement, crowd murmur"
   dashcam:
     label: "Car Dashcam / Interior"
-    description: "Dashboard or passenger view inside moving vehicle"
+    description: "Fixed dashboard camera or phone mounted on windshield"
     compatible_categories: ["traffic_transport", "natural_phenomenon", "infrastructure_failure", "aviation_anomaly"]
-    camera_traits: "fixed dashcam angle, engine hum, radio static, sudden brake"
+    camera_traits: "fixed angle, engine hum, windshield frame visible"
   boat:
     label: "Boat / Ship Deck"
-    description: "View from small boat or ship deck on water"
+    description: "Fixed viewpoint from boat deck, natural water sway only"
     compatible_categories: ["maritime_anomaly", "animal_encounter", "natural_phenomenon"]
-    camera_traits: "constant sway, water splashes on lens, wind noise, creaking hull"
+    camera_traits: "fixed position, gentle sway from waves, wind noise, water ambient"
   drone:
     label: "Drone / Aerial"
-    description: "High-angle aerial view, stable but distant"
+    description: "High-angle aerial, stable hover or very slow drift"
     compatible_categories: ["natural_phenomenon", "urban_anomaly", "infrastructure_failure", "maritime_anomaly"]
-    camera_traits: "smooth movement, wide angle, propeller hum faintly, high altitude wind"
+    camera_traits: "stable hover, wide angle, minimal movement, high altitude wind"
   tourist:
     label: "Tourist / Bystander"
-    description: "Casual phone recording by someone sightseeing"
+    description: "Person stopped, holding phone up to record, near-fixed"
     compatible_categories: ["natural_phenomenon", "urban_anomaly", "animal_encounter", "maritime_anomaly", "realistic_whatif"]
-    camera_traits: "vertical phone, sudden zoom, gasps, pointing, shaky when panicking"
+    camera_traits: "vertical phone, near-fixed, slight hand tremor, ambient gasps"
   mountain:
     label: "Mountain / Hiking Trail"
-    description: "View from hiking path, mountain road, or campsite"
+    description: "Fixed viewpoint from trail, overlook, or campsite"
     compatible_categories: ["natural_phenomenon", "animal_encounter", "traffic_transport"]
-    camera_traits: "heavy breathing, crunching gravel, wind, wildlife sounds"
+    camera_traits: "fixed position, wind, distant nature sounds"
   airport:
     label: "Airport Vicinity"
-    description: "Near runway, terminal window, or airport perimeter fence"
+    description: "Fixed viewpoint near runway or through terminal window"
     compatible_categories: ["aviation_anomaly"]
-    camera_traits: "jet engine roar, chain-link fence rattle, announcements in background"
+    camera_traits: "fixed angle, jet engine roar, fence or glass frame visible"
   underwater_surface:
-    label: "Water Surface / Kayak / Swim"
-    description: "At water level, partially submerged perspective"
+    label: "Water Surface / Kayak"
+    description: "At water level, fixed GoPro mount or held camera"
     compatible_categories: ["maritime_anomaly", "animal_encounter", "natural_phenomenon"]
-    camera_traits: "water on lens, bobbing motion, muffled underwater sounds, splashing"
+    camera_traits: "fixed mount, water on lens, bobbing from waves, splashing"
   interior:
     label: "Indoor / Window View"
-    description: "Looking out from inside a building, office, restaurant"
+    description: "Fixed viewpoint looking out through window or glass"
     compatible_categories: ["urban_anomaly", "natural_phenomenon", "infrastructure_failure", "realistic_whatif", "space_sky_anomaly"]
-    camera_traits: "glass reflection, muffled exterior sounds, interior ambient, sudden silence"
+    camera_traits: "fixed through glass, reflection visible, muffled exterior, interior ambient"
 
 # ── Hook Templates ───────────────────────────────────────
 # These are "buzz structure templates" - the FIRST thing decided before scenario
@@ -181,6 +195,7 @@ hook_templates:
     description: "Camera is already in motion, person clearly fleeing from danger behind"
     first_frame: "Bouncing camera, heavy breathing, danger visible behind/reflected"
     min_shock_score: 7
+    note: "Camera must be mostly fixed/minimal movement per single-scene rule - show fleeing people FROM a fixed vantage"
 
   - id: "impossible_sky"
     label: "Something Wrong in the Sky"
@@ -196,9 +211,10 @@ hook_templates:
 
   - id: "sound_before_sight"
     label: "Terrifying Sound Then Reveal"
-    description: "Opens with alarming audio (rumble, roar, siren) before camera swings to source"
-    first_frame: "Normal view but abnormal audio dominates, then quick pan to source"
+    description: "Opens with alarming audio (rumble, roar, siren) - anomaly source already partially visible"
+    first_frame: "Anomaly source visible at edge of frame with dominant alarming audio"
     min_shock_score: 7
+    note: "Anomaly must be VISIBLE within 0.5s - pure audio delay is not allowed"
 
   - id: "scale_reveal"
     label: "Sudden Scale Revelation"
@@ -208,15 +224,17 @@ hook_templates:
 
   - id: "calm_then_crack"
     label: "Perfect Calm Broken by Anomaly"
-    description: "Peaceful scenic shot where ONE wrong detail appears and grows"
+    description: "Seemingly calm scene but ONE wrong detail is already visible from frame 1"
     first_frame: "Beautiful but one visible anomaly - crack, shadow, movement that shouldn't be there"
-    min_shock_score: 6
+    min_shock_score: 7
+    note: "The anomaly must be visible at 0.5s, not 'appearing later'"
 
   - id: "crowd_panic"
     label: "Crowd Already Reacting"
-    description: "People are already screaming/running/pointing when recording starts"
-    first_frame: "Panicked crowd visible, camera searches for cause, finds it"
+    description: "People are already screaming/running/pointing, cause visible in frame"
+    first_frame: "Panicked crowd AND the cause both visible from the start"
     min_shock_score: 7
+    note: "Both the crowd reaction AND the anomaly must be visible within 0.5s"
 
   - id: "animal_proximity"
     label: "Dangerous Animal Impossibly Close"
@@ -228,11 +246,11 @@ hook_templates:
 dry_run: true  # NEVER auto-generate paid content. Set false only after explicit approval.
 
 # ── Video Generation (locked behind dry_run) ─────────────
+# 1 video = 1 clip = 10-15 seconds
 video:
   model: "wan-2.1"
   resolution: "480p"
-  cost_per_clip_usd: 0.20
-  max_cost_per_video_usd: 3.00   # hard ceiling
+  max_cost_per_video_usd: 0.35   # ~50 JPY hard ceiling (1 clip + SFX + LLM)
 
 # ── Output ───────────────────────────────────────────────
 output:
