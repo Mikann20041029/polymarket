@@ -29,10 +29,11 @@ def _ffprobe_duration(path: str) -> float:
 
 def _escape_ffmpeg_text(text: str) -> str:
     text = text.replace("\\", "\\\\")
+    text = text.replace("'", "\u2019")  # Replace ' with unicode right single quote
     text = text.replace(":", "\\:")
-    text = text.replace("'", "\\'")
     text = text.replace("\n", " ")
     text = text.replace("%", "%%")
+    text = text.replace(";", "\\;")
     return text
 
 
