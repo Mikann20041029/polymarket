@@ -1,21 +1,18 @@
-name: generate-world-recreation-short
+name: generate-construction-timelapse-short
 
 on:
   workflow_dispatch:
     inputs:
-      type:
-        description: "Topic type: anime, historical, or leave empty for random"
+      mode:
+        description: "Run mode: offline (no API), dry-run (LLM only), generate (full)"
         required: false
-        default: ""
-      num_clips:
-        description: "Number of clips per video (3-8)"
-        required: false
-        default: "5"
-      batch:
-        description: "Number of videos to generate (1-3)"
-        required: false
-        default: "1"
-  # DISABLED: Uncomment after channel is validated
+        default: "dry-run"
+        type: choice
+        options:
+          - offline
+          - dry-run
+          - generate
+  # DISABLED: Uncomment after validation
   # schedule:
   #   - cron: "0 */12 * * *"
 
@@ -41,41 +38,33 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Validate API keys
+        if: ${{ github.event.inputs.mode != 'offline' }}
         run: |
           test -n "${{ secrets.DEEPSEEK_API_KEY }}" || { echo "::error::Missing DEEPSEEK_API_KEY"; exit 1; }
-          test -n "${{ secrets.ELEVENLABS_API_KEY }}" || { echo "::error::Missing ELEVENLABS_API_KEY"; exit 1; }
-          test -n "${{ secrets.FAL_KEY }}" || { echo "::error::Missing FAL_KEY"; exit 1; }
 
-      - name: Generate world recreation short
+      - name: Generate construction timelapse short
         timeout-minutes: 35
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           FAL_KEY: ${{ secrets.FAL_KEY }}
         run: |
-          TYPE_ARG=""
-          if [ -n "${{ github.event.inputs.type }}" ]; then
-            TYPE_ARG="--type ${{ github.event.inputs.type }}"
-          fi
-
-          if [ "${{ github.event.inputs.batch || '1' }}" != "1" ]; then
-            python pipeline.py \
-              --batch ${{ github.event.inputs.batch }} \
-              --num-clips ${{ github.event.inputs.num_clips || '5' }} \
-              $TYPE_ARG \
-              --verbose
+          MODE="${{ github.event.inputs.mode || 'dry-run' }}"
+          if [ "$MODE" = "offline" ]; then
+            python build_pipeline.py --offline --verbose
+          elif [ "$MODE" = "generate" ]; then
+            python build_pipeline.py --generate --verbose
           else
-            python pipeline.py \
-              --num-clips ${{ github.event.inputs.num_clips || '5' }} \
-              $TYPE_ARG \
-              --verbose
+            python build_pipeline.py --dry-run --verbose
           fi
 
       - name: Upload generated video
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: world-short-${{ github.run_number }}
-          path: output/*.mp4
+          name: build-short-${{ github.run_number }}
+          path: |
+            output/*.mp4
+            output/*.json
           retention-days: 30
           if-no-files-found: warn
