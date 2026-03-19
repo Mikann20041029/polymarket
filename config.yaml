@@ -1,28 +1,23 @@
-# Witness-type Shock Video Generation System
-# All settings for scenario generation, scoring, and filtering
+# Construction Timelapse Luxury Space Transformation System
+# rebornspacestv-style: construction process + luxury reveal shorts
 
 # ── Generation ───────────────────────────────────────────
-# 1 video = 1 scene = 1 single continuous clip (NO multi-clip)
+# 1 video = 1 continuous 15-second timelapse clip
 generation:
-  candidates_per_template: 3       # scenarios per hook template
-  min_hook_templates: 10           # buzz structure templates per run
-  min_total_candidates: 30         # minimum candidates before filtering
-  duration_seconds: 14             # single clip length (10-15s range)
+  candidates_per_template: 3       # scenarios per concept template
+  min_concept_templates: 10        # concept templates per run
+  min_total_candidates: 30
+  duration_seconds: 15
   min_duration_seconds: 10
   max_duration_seconds: 15
 
-# ── Scene Time Structure ────────────────────────────────
-# All within ONE continuous clip. No cuts.
-# 0.0-1.0s : anomaly already visible
-# 1.0-5.0s : viewer understands what's happening
-# 5.0-10.0s: peak intensity
-# 10.0-15.0s: aftermath / lingering余韻
+# ── Video Time Structure ─────────────────────────────────
+# Construction timelapse progression within ONE 15s clip:
 time_structure:
-  anomaly_visible_by: 0.5          # seconds - anomaly MUST be on screen
-  understanding_by: 3.0            # seconds - situation fully clear
-  peak_start: 5.0
-  peak_end: 10.0
-  aftermath_start: 10.0
+  before_show: 1.0          # 0-1s: original space clearly visible
+  construction_start: 4.0   # 1-4s: excavation/demolition/first work
+  main_build: 10.0          # 4-10s: major structural changes
+  reveal_start: 10.0        # 10-15s: finishing + completion reveal
 
 # ── LLM ──────────────────────────────────────────────────
 llm:
@@ -30,229 +25,203 @@ llm:
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com"
   max_tokens: 8192
-  temperature: 0.9                 # high creativity for candidates
-  scoring_temperature: 0.3         # low randomness for scoring
+  temperature: 0.9
+  scoring_temperature: 0.3
 
 # ── Similarity Filter ────────────────────────────────────
 similarity:
-  threshold: 0.45                  # above this = too similar, reject
-  history_lookback: 50             # compare against last N videos
+  threshold: 0.40
+  history_lookback: 50
   hard_filters:
-    same_event_type_last_n: 5      # no same event_type in last 5
-    same_pov_last_n: 3             # no same camera_pov in last 3
-    same_hook_last_n: 3            # no same opening_hook in last 3
-    same_category_max_in_last_n: 3 # max times a category appears in last 10
-    same_category_window: 10
+    same_category_last_n: 3
+    same_construction_type_last_n: 5
+    same_reveal_type_last_n: 3
+    same_after_space_last_n: 5
+    consecutive_excavation_max: 3
+    consecutive_water_element_max: 3
   weights:
-    event_type: 0.15
-    scenario_summary: 0.15
-    location_style: 0.08
-    camera_pov: 0.12
-    opening_hook_type: 0.15
-    escalation_pattern: 0.10
-    climax_type: 0.10
-    aftermath_type: 0.05
-    visual_tags: 0.05
-    tone_tags: 0.05
+    concept: 0.35
+    process: 0.35
+    completion: 0.30
 
-# ── Buzz Scoring ─────────────────────────────────────────
+# ── Scoring ──────────────────────────────────────────────
 scoring:
-  min_total_score: 45              # out of 70, below = reject
-  min_hook_score: 7                # first_second_shock minimum (out of 10)
-  min_clarity_score: 7             # instant_clarity minimum - "think to understand" = reject
+  min_total_score: 50            # out of 80
+  min_concept_score: 7           # one_line_concept_strength minimum
+  min_process_score: 6           # construction_process_satisfaction minimum
   criteria:
-    - name: "first_second_shock"
-      weight: 1
-      description: "Does the first frame (0.5s) make viewers stop scrolling?"
-    - name: "instant_clarity"
-      weight: 1
-      description: "Can viewers understand what's happening without thinking? No ambiguity."
-    - name: "scale_impact"
-      weight: 1
-      description: "Is the scale dramatic - giant objects, vast phenomena, human contrast?"
-    - name: "realism_potential"
-      weight: 1
-      description: "Can a 10-15s AI video clip render this as one continuous shot convincingly?"
-    - name: "curiosity_gap"
-      weight: 1
-      description: "Will viewers wonder 'where is this?' or 'is this real?'"
-    - name: "uniqueness"
-      weight: 1
-      description: "Is this unlike anything commonly seen on YouTube/TikTok?"
-    - name: "replay_potential"
-      weight: 1
-      description: "Will viewers want to watch again or show someone?"
+    - name: "one_line_concept_strength"
+      description: "Does the one-line concept make you NEED to watch?"
+    - name: "first_second_clarity"
+      description: "Is the before-state instantly clear in 1 second?"
+    - name: "construction_process_satisfaction"
+      description: "Is the build process satisfying to watch in fast-forward?"
+    - name: "reveal_satisfaction"
+      description: "Does the final reveal deliver a wow moment?"
+    - name: "realism_believability"
+      description: "Could this actually be built? Does it look real?"
+    - name: "luxury_desire"
+      description: "Do viewers want this space for themselves?"
+    - name: "uniqueness_vs_history"
+      description: "Is this unlike previous videos?"
+    - name: "loop_rewatch_potential"
+      description: "Will viewers watch again or share?"
 
-# ── Category Balance ─────────────────────────────────────
+# ── Categories ───────────────────────────────────────────
 categories:
-  natural_phenomenon:
-    label: "Natural Phenomenon"
+  backyard_excavation:
+    label: "Backyard Excavation Transformation"
     target_ratio: 0.12
-    examples: ["earthquake", "tsunami", "volcanic eruption", "sinkhole", "avalanche", "waterspout"]
-  urban_anomaly:
-    label: "Urban Anomaly"
-    target_ratio: 0.12
-    examples: ["crane collapse", "dust devil in city", "building sway", "gas explosion aftermath"]
-  animal_encounter:
-    label: "Animal Encounter"
-    target_ratio: 0.11
-    examples: ["bear charge", "shark near-miss", "elephant confrontation", "whale breach"]
-  maritime_anomaly:
-    label: "Maritime Anomaly"
-    target_ratio: 0.12
-    examples: ["ship near-miss", "rogue wave", "whirlpool formation", "port accident"]
-  aviation_anomaly:
-    label: "Aviation Anomaly"
-    target_ratio: 0.11
-    examples: ["low flyover", "emergency landing", "near-miss", "cargo drop"]
-  traffic_transport:
-    label: "Traffic & Transport"
-    target_ratio: 0.11
-    examples: ["road collapse", "flash flood on highway", "train derailment", "tunnel flood"]
-  infrastructure_failure:
-    label: "Infrastructure Failure"
+    examples: ["sunken lounge", "terraced deck", "underground room"]
+  underground_container:
+    label: "Underground Container Build"
     target_ratio: 0.10
-    examples: ["dam overflow", "bridge cable snap", "tunnel collapse", "power grid failure"]
-  space_sky_anomaly:
-    label: "Space & Sky Anomaly"
+    examples: ["buried container gym", "container cinema", "bunker"]
+  hidden_under_pool:
+    label: "Hidden Room Under Pool"
     target_ratio: 0.10
-    examples: ["meteor fireball", "unexplained lights", "aurora anomaly", "atmospheric phenomenon"]
-  realistic_whatif:
-    label: "Realistic What-If"
-    target_ratio: 0.11
-    examples: ["rogue wave hits restaurant", "ice shelf collapse near boat", "sinkhole under building"]
+    examples: ["pool bottom opens to room", "underwater viewing room"]
+  pool_conversion:
+    label: "Pool-to-Luxury Conversion"
+    target_ratio: 0.10
+    examples: ["empty pool to fire pit", "pool to boat lounge"]
+  garage_warehouse:
+    label: "Garage / Warehouse Luxury Conversion"
+    target_ratio: 0.10
+    examples: ["garage to office", "warehouse to loft", "bus conversion"]
+  rooftop_construction:
+    label: "Rooftop Luxury Construction"
+    target_ratio: 0.10
+    examples: ["rooftop pool", "rooftop zen garden", "rooftop bar"]
+  pond_water_feature:
+    label: "Pond / Water Feature Build"
+    target_ratio: 0.10
+    examples: ["koi pond", "swimming pond", "waterfall garden"]
+  container_luxury:
+    label: "Container Luxury Installation"
+    target_ratio: 0.08
+    examples: ["container sauna", "stacked container house"]
+  narrow_space_build:
+    label: "Narrow/Tight Space Build"
+    target_ratio: 0.10
+    examples: ["alley kitchen", "under-stairs theater", "courtyard roof"]
+  exterior_normal_interior_unreal:
+    label: "Normal Exterior / Unreal Interior"
+    target_ratio: 0.10
+    examples: ["bookshelf secret bar", "water tank apartment", "car elevator"]
 
-# ── Camera POVs ──────────────────────────────────────────
-camera_povs:
-  balcony:
-    label: "Balcony / Rooftop"
-    description: "Fixed elevated viewpoint looking out over city/landscape"
-    compatible_categories: ["urban_anomaly", "natural_phenomenon", "aviation_anomaly", "space_sky_anomaly"]
-    camera_traits: "fixed or near-fixed, slight handheld tremor, ambient room sounds"
-  street:
-    label: "Street / Pedestrian"
-    description: "Ground-level, person standing still or stopped, phone held up"
-    compatible_categories: ["urban_anomaly", "natural_phenomenon", "aviation_anomaly", "infrastructure_failure"]
-    camera_traits: "fixed vertical phone, minimal movement, crowd murmur"
-  dashcam:
-    label: "Car Dashcam / Interior"
-    description: "Fixed dashboard camera or phone mounted on windshield"
-    compatible_categories: ["traffic_transport", "natural_phenomenon", "infrastructure_failure", "aviation_anomaly"]
-    camera_traits: "fixed angle, engine hum, windshield frame visible"
-  boat:
-    label: "Boat / Ship Deck"
-    description: "Fixed viewpoint from boat deck, natural water sway only"
-    compatible_categories: ["maritime_anomaly", "animal_encounter", "natural_phenomenon"]
-    camera_traits: "fixed position, gentle sway from waves, wind noise, water ambient"
-  drone:
-    label: "Drone / Aerial"
-    description: "High-angle aerial, stable hover or very slow drift"
-    compatible_categories: ["natural_phenomenon", "urban_anomaly", "infrastructure_failure", "maritime_anomaly"]
-    camera_traits: "stable hover, wide angle, minimal movement, high altitude wind"
-  tourist:
-    label: "Tourist / Bystander"
-    description: "Person stopped, holding phone up to record, near-fixed"
-    compatible_categories: ["natural_phenomenon", "urban_anomaly", "animal_encounter", "maritime_anomaly", "realistic_whatif"]
-    camera_traits: "vertical phone, near-fixed, slight hand tremor, ambient gasps"
-  mountain:
-    label: "Mountain / Hiking Trail"
-    description: "Fixed viewpoint from trail, overlook, or campsite"
-    compatible_categories: ["natural_phenomenon", "animal_encounter", "traffic_transport"]
-    camera_traits: "fixed position, wind, distant nature sounds"
-  airport:
-    label: "Airport Vicinity"
-    description: "Fixed viewpoint near runway or through terminal window"
-    compatible_categories: ["aviation_anomaly"]
-    camera_traits: "fixed angle, jet engine roar, fence or glass frame visible"
-  underwater_surface:
-    label: "Water Surface / Kayak"
-    description: "At water level, fixed GoPro mount or held camera"
-    compatible_categories: ["maritime_anomaly", "animal_encounter", "natural_phenomenon"]
-    camera_traits: "fixed mount, water on lens, bobbing from waves, splashing"
-  interior:
-    label: "Indoor / Window View"
-    description: "Fixed viewpoint looking out through window or glass"
-    compatible_categories: ["urban_anomaly", "natural_phenomenon", "infrastructure_failure", "realistic_whatif", "space_sky_anomaly"]
-    camera_traits: "fixed through glass, reflection visible, muffled exterior, interior ambient"
+# ── Construction Types (for dedup) ───────────────────────
+construction_types:
+  - excavation_and_burial
+  - surface_renovation
+  - structural_framing
+  - container_modification
+  - mechanical_installation
+  - waterproofing_and_tiling
+  - interior_finishing
+  - landscape_and_planting
+  - demolition_and_rebuild
+  - hidden_mechanism_build
 
-# ── Hook Templates ───────────────────────────────────────
-# These are "buzz structure templates" - the FIRST thing decided before scenario
-hook_templates:
-  - id: "massive_object_too_close"
-    label: "Massive Object Already Too Close"
-    description: "Frame opens with a giant object/entity filling 60-80% of frame, impossibly close"
-    first_frame: "Giant object dominates the frame, dwarfing everything else"
-    min_shock_score: 8
+# ── Concept Templates ────────────────────────────────────
+# "What makes people click" - decided BEFORE specific scenario
+concept_templates:
+  - id: "dig_and_bury"
+    label: "Dig a Hole, Bury Something Amazing"
+    description: "Excavate ground, lower/install something unexpected, cover it up"
+    key_process: "excavation → lowering → burial → interior reveal"
+    satisfaction_driver: "seeing the ground swallow something big"
 
-  - id: "collapse_already_started"
-    label: "Collapse Already In Progress"
-    description: "Something massive is already crumbling/falling/breaking when video starts"
-    first_frame: "Debris falling, structure tilting, ground splitting - mid-event"
-    min_shock_score: 8
+  - id: "hidden_behind"
+    label: "Secret Space Behind Ordinary Surface"
+    description: "Normal wall/floor/shelf conceals a luxury space behind it"
+    key_process: "mechanism build → hidden door → interior finishing → reveal"
+    satisfaction_driver: "the moment the hidden door opens"
 
-  - id: "fleeing_pov"
-    label: "Running Away From Something"
-    description: "Camera is already in motion, person clearly fleeing from danger behind"
-    first_frame: "Bouncing camera, heavy breathing, danger visible behind/reflected"
-    min_shock_score: 7
-    note: "Camera must be mostly fixed/minimal movement per single-scene rule - show fleeing people FROM a fixed vantage"
+  - id: "empty_to_luxury"
+    label: "Empty/Ugly Space to Luxury"
+    description: "Abandoned or boring space gets fully transformed by construction"
+    key_process: "demolition → cleanup → rebuild → luxury finishing"
+    satisfaction_driver: "the contrast between before and after"
 
-  - id: "impossible_sky"
-    label: "Something Wrong in the Sky"
-    description: "Camera looks up and something impossible/terrifying is in the sky"
-    first_frame: "Sky filled with anomalous object, light, or formation"
-    min_shock_score: 7
+  - id: "water_creation"
+    label: "Create Water Where There Was None"
+    description: "Dry land becomes pool/pond/water feature through construction"
+    key_process: "excavation → waterproofing → structure → fill with water"
+    satisfaction_driver: "the moment water fills the space"
 
-  - id: "water_wrong"
-    label: "Water Behaving Impossibly"
-    description: "Water is doing something it shouldn't - rising, spinning, retreating, surging"
-    first_frame: "Water mass moving unnaturally, defying expectations"
-    min_shock_score: 7
+  - id: "stack_and_build_up"
+    label: "Stack/Elevate to Create Vertical Space"
+    description: "Stacking containers, building upward, creating multi-level"
+    key_process: "crane work → stacking → connecting → interior per level"
+    satisfaction_driver: "seeing things stack with heavy machinery"
 
-  - id: "sound_before_sight"
-    label: "Terrifying Sound Then Reveal"
-    description: "Opens with alarming audio (rumble, roar, siren) - anomaly source already partially visible"
-    first_frame: "Anomaly source visible at edge of frame with dominant alarming audio"
-    min_shock_score: 7
-    note: "Anomaly must be VISIBLE within 0.5s - pure audio delay is not allowed"
+  - id: "convert_vehicle"
+    label: "Vehicle/Object Becomes Living Space"
+    description: "Bus, container, tank, etc. converted to luxury interior"
+    key_process: "gut interior → reframe → insulate → luxury finishing"
+    satisfaction_driver: "the absurd transformation of a mundane object"
 
-  - id: "scale_reveal"
-    label: "Sudden Scale Revelation"
-    description: "Something ordinary is revealed to be impossibly large or close via size comparison"
-    first_frame: "Familiar object then a human/car enters frame showing insane scale contrast"
-    min_shock_score: 8
+  - id: "landscape_sculpt"
+    label: "Sculpt the Land Into a Feature"
+    description: "Reshape terrain into terraces, sunken areas, water features"
+    key_process: "earthmoving → grading → hardscaping → planting/finishing"
+    satisfaction_driver: "watching earth move and reshape"
 
-  - id: "calm_then_crack"
-    label: "Perfect Calm Broken by Anomaly"
-    description: "Seemingly calm scene but ONE wrong detail is already visible from frame 1"
-    first_frame: "Beautiful but one visible anomaly - crack, shadow, movement that shouldn't be there"
-    min_shock_score: 7
-    note: "The anomaly must be visible at 0.5s, not 'appearing later'"
+  - id: "mechanical_reveal"
+    label: "Mechanical/Moving Element Reveals Space"
+    description: "Floor slides, wall rotates, roof retracts to reveal hidden area"
+    key_process: "mechanism fabrication → installation → concealment → activation"
+    satisfaction_driver: "the mechanical reveal moment"
 
-  - id: "crowd_panic"
-    label: "Crowd Already Reacting"
-    description: "People are already screaming/running/pointing, cause visible in frame"
-    first_frame: "Panicked crowd AND the cause both visible from the start"
-    min_shock_score: 7
-    note: "Both the crowd reaction AND the anomaly must be visible within 0.5s"
+  - id: "tiny_to_grand"
+    label: "Impossibly Small Space Becomes Grand"
+    description: "Tiny closet/gap/shed becomes surprisingly luxurious inside"
+    key_process: "maximize every inch → clever storage → premium materials → lighting"
+    satisfaction_driver: "disbelief at how much fits in so little space"
 
-  - id: "animal_proximity"
-    label: "Dangerous Animal Impossibly Close"
-    description: "Dangerous animal is already within striking distance when video starts"
-    first_frame: "Animal fills significant portion of frame, immediate threat apparent"
-    min_shock_score: 8
+  - id: "natural_integration"
+    label: "Build Merging With Nature"
+    description: "Construction that integrates water, trees, rock, earth as features"
+    key_process: "work around/with natural elements → enhance → blend boundaries"
+    satisfaction_driver: "the seamless blend of built and natural"
+
+# ── Camera Styles ────────────────────────────────────────
+camera_styles:
+  drone_overhead:
+    label: "Drone Overhead Timelapse"
+    description: "Top-down or angled aerial view of the entire work site"
+    traits: "stable hover, wide angle, shows full site progression"
+    best_for: ["excavation", "landscape", "pool", "rooftop"]
+
+  fixed_wide:
+    label: "Fixed Wide Angle"
+    description: "Tripod-mounted wide shot showing the full space"
+    traits: "fixed position, everything visible, classic timelapse feel"
+    best_for: ["garage", "interior", "container", "narrow_space"]
+
+  walkthrough_reveal:
+    label: "Walkthrough Reveal"
+    description: "Camera moves through the space at the end for reveal"
+    traits: "fixed during construction, slow walkthrough for final reveal"
+    best_for: ["hidden_room", "interior", "secret_space"]
+
+  crane_descend:
+    label: "Crane/Descend Shot"
+    description: "High angle descending into the completed space"
+    traits: "starts high showing before, descends into finished space"
+    best_for: ["underground", "sunken", "pool", "excavation"]
 
 # ── Dry Run ──────────────────────────────────────────────
-dry_run: true  # NEVER auto-generate paid content. Set false only after explicit approval.
+dry_run: true
 
 # ── Video Generation (locked behind dry_run) ─────────────
-# 1 video = 1 clip = 10-15 seconds
 video:
   model: "wan-2.1"
   resolution: "480p"
-  max_cost_per_video_usd: 0.35   # ~50 JPY hard ceiling (1 clip + SFX + LLM)
+  max_cost_per_video_usd: 0.35
 
 # ── Output ───────────────────────────────────────────────
 output:
   directory: "output"
-  filename_prefix: "witness"
+  filename_prefix: "build"

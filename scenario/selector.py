@@ -1,5 +1,5 @@
 """
-Final scenario selection.
+Final scenario selection for construction timelapse system.
 
 Picks the single best candidate after all filtering and scoring.
 Saves to history.
@@ -45,8 +45,8 @@ def select_best(candidates: list[dict]) -> dict | None:
 
     winner = sorted_candidates[0]
     logger.info(
-        "Selected: %s (adjusted_score=%.1f, buzz_total=%d, bonus=%.1f)",
-        winner.get("scenario_summary", "")[:60],
+        "Selected: %s (adjusted=%.1f, total=%d, bonus=%.1f)",
+        winner.get("one_line_concept", "")[:60],
         winner.get("adjusted_score", 0),
         winner.get("buzz_total", 0),
         winner.get("category_bonus", 0),
@@ -64,25 +64,21 @@ def record_selection(
     """Record the selected scenario to history."""
     now = datetime.now(timezone.utc)
     entry = {
-        "id": f"vid_{now.strftime('%Y%m%d_%H%M%S')}",
+        "id": f"build_{now.strftime('%Y%m%d_%H%M%S')}",
         "created_at": now.isoformat(),
         "scenario": {
+            "one_line_concept": scenario.get("one_line_concept", ""),
             "category": scenario.get("category", ""),
-            "event_type": scenario.get("event_type", ""),
-            "scenario_summary": scenario.get("scenario_summary", ""),
-            "location_style": scenario.get("location_style", ""),
-            "time_of_day": scenario.get("time_of_day", ""),
-            "weather_atmosphere": scenario.get("weather_atmosphere", ""),
-            "camera_pov": scenario.get("camera_pov", ""),
-            "camera_movement": scenario.get("camera_movement", ""),
-            "opening_hook_type": scenario.get("opening_hook_type", ""),
-            "opening_hook_description": scenario.get("opening_hook_description", ""),
-            "peak_moment": scenario.get("peak_moment", ""),
-            "aftermath": scenario.get("aftermath", ""),
-            "visual_tags": scenario.get("visual_tags", []),
-            "tone_tags": scenario.get("tone_tags", []),
-            "dominant_colors": scenario.get("dominant_colors", []),
-            "sound_atmosphere": scenario.get("sound_atmosphere", ""),
+            "construction_type": scenario.get("construction_type", ""),
+            "before_space": scenario.get("before_space", {}),
+            "construction_process": scenario.get("construction_process", {}),
+            "after_space": scenario.get("after_space", {}),
+            "reveal_type": scenario.get("reveal_type", ""),
+            "time_structure": scenario.get("time_structure", {}),
+            "camera_style": scenario.get("camera_style", ""),
+            "location_feel": scenario.get("location_feel", ""),
+            "similarity_tags": scenario.get("similarity_tags", []),
+            "_concept_template": scenario.get("_concept_template", ""),
         },
         "buzz_score": scenario.get("buzz_score", {}),
         "buzz_total": scenario.get("buzz_total", 0),
@@ -99,7 +95,6 @@ def record_selection(
 
     history.append(entry)
 
-    # Trim to max history
     if len(history) > max_history:
         history = history[-max_history:]
 

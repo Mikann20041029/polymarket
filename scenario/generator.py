@@ -1,102 +1,108 @@
 """
-Two-stage scenario candidate generator.
+Two-stage construction timelapse scenario generator.
 
-Stage 1: Select hook templates + POVs (structure-first)
-Stage 2: LLM generates concrete scenarios per (hook, POV) pair
+Stage 1: Select concept templates + camera styles
+Stage 2: LLM generates concrete build scenarios per template
 
-Generation order (strict):
-  1. POV is fixed
-  2. Opening hook is fixed
-  3. Scenario is generated to fit both
-  4. Peak/aftermath generated last
-
-Single-scene model:
-  1 video = 1 continuous clip = 10-15 seconds
-  No multi-clip. No story arc. No cuts.
-  Camera is fixed or near-fixed.
-  Anomaly visible within 0.5 seconds.
+Generation order:
+  1. Concept template is fixed (what makes people click)
+  2. Construction process is designed (what's satisfying to watch)
+  3. Before/after spaces are defined
+  4. 15-second timelapse timeline is structured
 """
 import json
 import logging
 import random
 
-from .hooks import load_hook_templates, select_hooks_for_run, validate_hook_strength
-from .povs import load_povs, select_pov_for_hook, validate_pov_event_compatibility
-
 logger = logging.getLogger(__name__)
 
-CANDIDATE_SYSTEM_PROMPT = """You are a creative director for a viral short-form video channel.
-You create concepts for "witness-type shock footage" - vertical videos (9:16) that look like
-real footage accidentally captured by ordinary people.
+CANDIDATE_SYSTEM_PROMPT = """You are a creative director for a viral construction timelapse YouTube Shorts channel.
+You create concepts for "luxury space transformation" videos in the style of rebornspacestv.
 
-CRITICAL FORMAT: 1 video = 1 single continuous shot = 10-15 seconds. NO cuts, NO multi-clip, NO story.
+WHAT THESE VIDEOS ARE:
+- 15-second construction timelapse showing a space being built/transformed
+- Workers, heavy machinery, tools, materials are ALL visible
+- High-speed time-lapse of real construction: digging, framing, pouring, tiling, finishing
+- Ends with a luxury/hidden/amazing completed space
+- "Could this really exist?" feeling - not pure fantasy, but aspirational
 
-RULES:
-- Each video is ONE continuous 10-15 second clip from a FIXED or near-fixed camera
-- Camera does NOT move significantly. It stays in place. Natural tremor only.
-- The anomaly MUST be visible within the first 0.5 seconds of the video
-- The viewer MUST understand what's happening within 3 seconds WITHOUT thinking
-- No text, narration, dialogue, or story structure
-- Audio: natural environment sounds only
-- Target audience: global viewers (not Japan-specific)
-- If signs/text appear in the scene, use language appropriate to the location
-- NO anime, NO historical recreation
-- Prioritize "is this real?" reactions
+WHAT THESE VIDEOS ARE NOT:
+- NOT disasters, accidents, or shock footage
+- NOT magic/instant transformations (the BUILD PROCESS is the content)
+- NOT just before/after photos
+- NOT pure fantasy or sci-fi
 
-TIME STRUCTURE (within the single 10-15s clip):
-  0.0-0.5s: Anomaly ALREADY visible in frame
-  0.5-3.0s: Viewer fully understands what's happening
-  3.0-10.0s: Event intensifies / reaches peak
-  10.0-15.0s: Aftermath or lingering moment
+CONSTRUCTION PROCESS IS KEY:
+- Excavators digging, cranes lifting, trucks hauling
+- Workers framing, welding, pouring concrete, laying tile
+- Materials: wood, steel, glass, stone, concrete, soil
+- The satisfaction comes from WATCHING things get built fast
 
-WHAT MAKES IT WORK:
-- ONE event, ONE viewpoint, ONE continuous moment
-- No buildup needed - we're dropping into the middle of something
-- Fixed camera = more realistic (security cam, phone propped up, dashcam, mounted GoPro)
-- Simplicity = clarity = instant understanding = viral"""
+TIME STRUCTURE (15 seconds):
+  0-1s:   Before state clearly visible (boring/empty/ugly space)
+  1-4s:   Construction begins (demolition, excavation, first work)
+  4-10s:  Major build (structure, installation, big changes)
+  10-15s: Finishing touches + completed reveal (lights on, water fills, door opens)
 
-CANDIDATE_USER_PROMPT = """Generate exactly {count} scenario candidates.
+TARGET: Global audience. Locations should feel international."""
 
-CONSTRAINTS FOR THIS BATCH:
-- Camera POV: {pov_id} ({pov_description})
-- Camera traits: {pov_traits}
-- Opening hook structure: {hook_label} - {hook_description}
-- First frame must match: {hook_first_frame}
-- Categories to consider: {compatible_categories}
-- Categories to AVOID (overused recently): {avoid_categories}
+CANDIDATE_USER_PROMPT = """Generate exactly {count} construction timelapse scenario candidates.
 
-REMEMBER: 1 video = 1 single continuous clip of 10-15 seconds.
-Camera is FIXED or near-fixed. No cuts, no story, no multi-scene.
+CONCEPT TEMPLATE FOR THIS BATCH:
+- Template: {template_label}
+- Core idea: {template_description}
+- Key process: {template_key_process}
+- Satisfaction driver: {template_satisfaction}
+- Camera style: {camera_label} - {camera_description}
+
+CATEGORIES TO CONSIDER: {compatible_categories}
+CATEGORIES TO AVOID (overused): {avoid_categories}
 
 Each candidate MUST:
-1. Have the anomaly ALREADY visible at 0.5 seconds (not building up to it)
-2. Be instantly understandable without thinking
-3. Work as a SINGLE continuous fixed-camera shot
-4. Have a distinct event_type, location, and mood from other candidates
+1. Have workers and/or machinery visible in the construction phase
+2. Have a one-line concept that makes someone NEED to watch
+3. Have a clear before → build process → after progression
+4. End with something luxurious/hidden/amazing
 
-Return ONLY a JSON array of {count} objects with this exact structure:
+Return ONLY a JSON array of {count} objects:
 [
   {{
-    "category": "<one of: natural_phenomenon, urban_anomaly, animal_encounter, maritime_anomaly, aviation_anomaly, traffic_transport, infrastructure_failure, space_sky_anomaly, realistic_whatif>",
-    "event_type": "<specific event, e.g. 'glacier_calving'>",
-    "scenario_summary": "<1-2 sentences: what is happening in this single continuous shot>",
-    "location_style": "<specific location feel, e.g. 'Norwegian fjord, summer afternoon'>",
-    "time_of_day": "<dawn/morning/midday/afternoon/dusk/night>",
-    "weather_atmosphere": "<e.g. 'overcast, humid, haze'>",
-    "camera_pov": "{pov_id}",
-    "camera_movement": "<fixed / near-fixed with slight tremor / mounted stable>",
-    "opening_hook_type": "{hook_id}",
-    "opening_hook_description": "<exactly what is visible at 0.5 seconds>",
-    "peak_moment": "<what happens at maximum intensity (5-10s mark)>",
-    "aftermath": "<what the last few seconds show (10-15s)>",
-    "visual_tags": ["<5-8 specific visual elements>"],
-    "tone_tags": ["<2-4 emotional tones>"],
-    "dominant_colors": ["<3-4 main colors>"],
-    "sound_atmosphere": "<ambient sound for this single continuous moment>"
+    "one_line_concept": "<one sentence that makes you click, e.g. 'Burying a shipping container to build an underground cinema'>",
+    "category": "<one of: backyard_excavation, underground_container, hidden_under_pool, pool_conversion, garage_warehouse, rooftop_construction, pond_water_feature, container_luxury, narrow_space_build, exterior_normal_interior_unreal>",
+    "construction_type": "<e.g. excavation_and_burial, surface_renovation, structural_framing, etc.>",
+    "before_space": {{
+      "type": "<e.g. flat_grass_backyard, empty_pool, rusty_garage>",
+      "description": "<what it looks like at 0 seconds>",
+      "visual": "<specific colors, textures, mood>"
+    }},
+    "construction_process": {{
+      "stages": ["<stage 1: what happens first>", "<stage 2>", "<stage 3>", "<stage 4>", "<stage 5>"],
+      "heavy_machinery": ["<list machines or empty>"],
+      "worker_presence": "<high/medium/low>",
+      "key_materials": ["<main materials used>"],
+      "excavation_required": <true/false>
+    }},
+    "after_space": {{
+      "type": "<e.g. underground_cinema, infinity_pool, secret_bar>",
+      "description": "<what the finished space looks like>",
+      "luxury_level": "<ultra/high/medium>",
+      "water_element": <true/false>,
+      "final_visual_hook": "<the single most impressive visual in the last 3 seconds>"
+    }},
+    "reveal_type": "<hidden_entrance_reveal / water_fill_reveal / lights_on_reveal / mechanical_reveal / walkthrough_reveal / aerial_reveal>",
+    "time_structure": {{
+      "0_1s": "<before state>",
+      "1_4s": "<construction start>",
+      "4_10s": "<main build>",
+      "10_15s": "<finishing + reveal>"
+    }},
+    "camera_style": "{camera_id}",
+    "location_feel": "<e.g. American suburban, Mediterranean coastal, Scandinavian forest>",
+    "similarity_tags": ["<8-12 tags for dedup>"]
   }}
 ]
 
-Make each candidate MAXIMALLY different from the others."""
+Make each candidate MAXIMALLY different: different spaces, different processes, different reveals."""
 
 
 def generate_candidates(
@@ -108,45 +114,40 @@ def generate_candidates(
     """
     Two-stage candidate generation.
 
-    Stage 1: Select 10 hook templates, pair each with a compatible POV
-    Stage 2: For each (hook, POV) pair, generate 3 concrete scenarios
-
-    Returns: list of 30+ candidate scenario dicts
+    Stage 1: Select concept templates, pair with camera styles
+    Stage 2: LLM generates concrete scenarios per pair
     """
     gen_config = config.get("generation", {})
     llm_config = config.get("llm", {})
     categories_config = config.get("categories", {})
 
-    hook_templates = load_hook_templates(config)
-    povs = load_povs(config)
+    templates = config.get("concept_templates", [])
+    cameras = config.get("camera_styles", {})
 
-    n_templates = gen_config.get("min_hook_templates", 10)
+    n_templates = gen_config.get("min_concept_templates", 10)
     n_per_template = gen_config.get("candidates_per_template", 3)
 
-    # Stage 1: Select hooks and pair with POVs
-    selected_hooks = select_hooks_for_run(hook_templates, history, count=n_templates)
-
-    # Determine over-represented categories to avoid
+    # Stage 1: Select templates (prefer not recently used)
+    selected = _select_templates(templates, history, count=n_templates)
     avoid_categories = _get_overused_categories(category_stats, categories_config)
 
-    # Stage 2: Generate scenarios per (hook, POV) pair
+    # Stage 2: Generate per template
     all_candidates = []
 
-    for hook in selected_hooks:
-        # Select a POV compatible with this hook
-        pov_id, pov_cfg = select_pov_for_hook(povs, hook, history)
-        compatible_cats = pov_cfg.get("compatible_categories", [])
+    for template in selected:
+        # Pick a camera style
+        camera_id, camera_cfg = _select_camera(cameras, template, history)
 
         prompt = CANDIDATE_USER_PROMPT.format(
             count=n_per_template,
-            pov_id=pov_id,
-            pov_description=pov_cfg.get("description", ""),
-            pov_traits=pov_cfg.get("camera_traits", ""),
-            hook_label=hook.get("label", ""),
-            hook_description=hook.get("description", ""),
-            hook_first_frame=hook.get("first_frame", ""),
-            hook_id=hook.get("id", ""),
-            compatible_categories=", ".join(compatible_cats),
+            template_label=template.get("label", ""),
+            template_description=template.get("description", ""),
+            template_key_process=template.get("key_process", ""),
+            template_satisfaction=template.get("satisfaction_driver", ""),
+            camera_id=camera_id,
+            camera_label=camera_cfg.get("label", ""),
+            camera_description=camera_cfg.get("description", ""),
+            compatible_categories=", ".join(categories_config.keys()),
             avoid_categories=", ".join(avoid_categories) if avoid_categories else "none",
         )
 
@@ -161,149 +162,219 @@ def generate_candidates(
                 temperature=llm_config.get("temperature", 0.9),
             )
             raw = response.choices[0].message.content.strip()
-            candidates = _parse_candidates_json(raw)
+            candidates = _parse_json(raw)
 
-            # Validate each candidate
             for c in candidates:
-                # Enforce POV and hook from this batch
-                c["camera_pov"] = pov_id
-                c["opening_hook_type"] = hook["id"]
-
-                # Validate POV-event compatibility
-                cat = c.get("category", "")
-                if not validate_pov_event_compatibility(pov_id, cat, povs):
-                    logger.debug(
-                        "Rejected: POV '%s' incompatible with category '%s'",
-                        pov_id, cat,
-                    )
-                    continue
-
-                # Validate hook strength
-                if not validate_hook_strength(c, hook.get("min_shock_score", 7)):
-                    logger.debug(
-                        "Rejected: weak hook for '%s'",
-                        c.get("scenario_summary", "")[:40],
-                    )
-                    continue
-
+                c["_concept_template"] = template["id"]
+                c["camera_style"] = camera_id
                 all_candidates.append(c)
 
             logger.info(
-                "Hook '%s' + POV '%s': generated %d valid candidates",
-                hook["id"], pov_id, len(candidates),
+                "Template '%s' + camera '%s': %d candidates",
+                template["id"], camera_id, len(candidates),
             )
-
         except Exception as e:
-            logger.error(
-                "Generation failed for hook '%s': %s", hook["id"], e
-            )
-            continue
+            logger.error("Generation failed for '%s': %s", template["id"], e)
 
-    logger.info("Total candidates generated: %d", len(all_candidates))
+    logger.info("Total candidates: %d", len(all_candidates))
     return all_candidates
 
 
 def generate_candidates_dry(config: dict) -> list[dict]:
-    """
-    Generate candidates without any API call (for testing structure).
-
-    Returns a small set of hardcoded example candidates.
-    Single-scene format: 1 video = 1 continuous 10-15s clip.
-    """
+    """Hardcoded examples for offline testing."""
     return [
         {
-            "category": "maritime_anomaly",
-            "event_type": "cargo_ship_near_miss",
-            "scenario_summary": "A massive container ship hull fills the frame, drifting dangerously close to a small pier. Single continuous shot from dock level.",
-            "location_style": "Southeast Asian commercial port",
-            "time_of_day": "afternoon",
-            "weather_atmosphere": "hazy, humid, overcast",
-            "camera_pov": "tourist",
-            "camera_movement": "near-fixed, slight hand tremor",
-            "opening_hook_type": "massive_object_too_close",
-            "opening_hook_description": "Towering ship hull fills 80% of frame at 0.5s, impossibly close to the pier",
-            "peak_moment": "Ship hull scrapes pier edge, wood splinters fly, water surges between hull and dock",
-            "aftermath": "Ship slowly drifts past, wake rocks small boats, debris floats",
-            "visual_tags": ["giant_ship_hull", "pier_wood", "water_surge", "rust_streaks", "scale_contrast"],
-            "tone_tags": ["dread", "helplessness", "scale_shock"],
-            "dominant_colors": ["steel_gray", "ocean_blue", "rust_orange"],
-            "sound_atmosphere": "deep metal groaning, water churning, wood cracking",
+            "one_line_concept": "Burying two shipping containers in the backyard to build an underground gym with a skylight",
+            "category": "underground_container",
+            "construction_type": "excavation_and_burial",
+            "before_space": {
+                "type": "suburban_backyard",
+                "description": "Flat grass yard with wooden fence",
+                "visual": "green grass, wood fence, boring suburban"
+            },
+            "construction_process": {
+                "stages": [
+                    "Excavator digs deep rectangular pit",
+                    "Crane lowers two containers into pit",
+                    "Workers weld containers together",
+                    "Waterproofing and backfill",
+                    "Interior: rubber floor, mirrors, LED strips, skylight"
+                ],
+                "heavy_machinery": ["excavator", "crane"],
+                "worker_presence": "high",
+                "key_materials": ["shipping_container", "soil", "rubber_mat", "LED_strips"],
+                "excavation_required": True
+            },
+            "after_space": {
+                "type": "underground_gym",
+                "description": "Underground gym with mirrors, LEDs, skylight showing grass above",
+                "luxury_level": "high",
+                "water_element": False,
+                "final_visual_hook": "Skylight view from inside gym showing normal yard above"
+            },
+            "reveal_type": "lights_on_reveal",
+            "time_structure": {
+                "0_1s": "Flat boring backyard",
+                "1_4s": "Excavator rips into yard, huge pit",
+                "4_10s": "Containers lowered, welded, backfilled, interior built",
+                "10_15s": "Lights on: gym with mirrors, LEDs, skylight to grass above"
+            },
+            "camera_style": "crane_descend",
+            "location_feel": "American suburban",
+            "similarity_tags": ["container", "underground", "gym", "skylight", "excavation", "backyard", "mirror", "LED"],
+            "_concept_template": "dig_and_bury",
         },
         {
-            "category": "natural_phenomenon",
-            "event_type": "highway_sinkhole",
-            "scenario_summary": "Road surface ahead cracks and sinks in real time, swallowing the front car. Single continuous dashcam shot.",
-            "location_style": "American suburban highway",
-            "time_of_day": "morning",
-            "weather_atmosphere": "clear, bright",
-            "camera_pov": "dashcam",
-            "camera_movement": "fixed dashcam angle",
-            "opening_hook_type": "collapse_already_started",
-            "opening_hook_description": "Road surface visibly cracked and sinking at 0.5s, front car tilting into depression",
-            "peak_moment": "Road section drops fully, car slides into hole, dust cloud erupts",
-            "aftermath": "Dust settles, hole edge visible, car alarms in distance",
-            "visual_tags": ["cracking_asphalt", "sinking_road", "tilting_car", "dust_cloud", "cracks_spreading"],
-            "tone_tags": ["shock", "disbelief"],
-            "dominant_colors": ["asphalt_gray", "dust_brown", "sky_blue"],
-            "sound_atmosphere": "cracking concrete, grinding earth, distant car alarms",
+            "one_line_concept": "Building a secret whiskey bar behind a rotating bookshelf in the basement",
+            "category": "exterior_normal_interior_unreal",
+            "construction_type": "hidden_mechanism_build",
+            "before_space": {
+                "type": "messy_basement",
+                "description": "Cluttered basement with old shelving",
+                "visual": "dim lighting, concrete walls, dusty shelves"
+            },
+            "construction_process": {
+                "stages": [
+                    "Clear out basement, demolish old wall",
+                    "Build rotating door mechanism frame",
+                    "Construct bookshelf facade with real books",
+                    "Behind wall: brick, bar counter, whiskey shelves",
+                    "Leather stools, ambient lighting, finishing"
+                ],
+                "heavy_machinery": [],
+                "worker_presence": "medium",
+                "key_materials": ["brick", "wood", "steel_bearings", "leather", "glass"],
+                "excavation_required": False
+            },
+            "after_space": {
+                "type": "secret_whiskey_bar",
+                "description": "Brick-walled speakeasy bar with leather stools, warm lighting",
+                "luxury_level": "ultra",
+                "water_element": False,
+                "final_visual_hook": "Push bookshelf, it rotates to reveal glowing bar behind"
+            },
+            "reveal_type": "mechanical_reveal",
+            "time_structure": {
+                "0_1s": "Normal basement with bookshelf",
+                "1_4s": "Demolition, mechanism frame build",
+                "4_10s": "Brick wall, bar counter, shelving, bookshelf facade",
+                "10_15s": "Push bookshelf → rotates → warm glow of whiskey bar"
+            },
+            "camera_style": "walkthrough_reveal",
+            "location_feel": "American East Coast brownstone",
+            "similarity_tags": ["bookshelf", "secret_door", "whiskey", "bar", "basement", "brick", "rotating", "speakeasy"],
+            "_concept_template": "hidden_behind",
         },
         {
-            "category": "aviation_anomaly",
-            "event_type": "low_flyover_residential",
-            "scenario_summary": "Massive cargo plane belly fills the sky directly overhead a residential street. Single continuous shot looking up.",
-            "location_style": "South American residential street near airport",
-            "time_of_day": "afternoon",
-            "weather_atmosphere": "clear, sunny, light wind",
-            "camera_pov": "street",
-            "camera_movement": "fixed vertical phone, looking up",
-            "opening_hook_type": "massive_object_too_close",
-            "opening_hook_description": "Giant aircraft underside already fills upper 70% of frame at 0.5s, shadow covers everything",
-            "peak_moment": "Plane passes directly overhead, deafening roar, tree branches whip violently",
-            "aftermath": "Plane recedes, shadow lifts, leaves and debris settle from the air",
-            "visual_tags": ["plane_belly", "shadow_coverage", "tree_whipping", "residential_street", "scale_shock"],
-            "tone_tags": ["awe", "fear", "disbelief"],
-            "dominant_colors": ["aircraft_white", "shadow_dark", "sky_blue"],
-            "sound_atmosphere": "overwhelming jet roar, wind blast, rattling windows",
+            "one_line_concept": "Digging a natural swimming pond with underwater viewing window in the backyard",
+            "category": "pond_water_feature",
+            "construction_type": "excavation_and_burial",
+            "before_space": {
+                "type": "empty_yard",
+                "description": "Wide empty backyard, just grass",
+                "visual": "flat green, nothing special"
+            },
+            "construction_process": {
+                "stages": [
+                    "Excavator shapes pond basin",
+                    "Lay waterproof liner, pile rocks for edges",
+                    "Build wooden dock extending over water",
+                    "Install acrylic panel in side wall for underwater view",
+                    "Fill with water, add aquatic plants"
+                ],
+                "heavy_machinery": ["excavator"],
+                "worker_presence": "high",
+                "key_materials": ["pond_liner", "stone", "wood", "acrylic_panel", "aquatic_plants"],
+                "excavation_required": True
+            },
+            "after_space": {
+                "type": "swimming_pond_with_window",
+                "description": "Natural pond, wooden dock, underground viewing window shows fish",
+                "luxury_level": "high",
+                "water_element": True,
+                "final_visual_hook": "View from underwater window: fish swimming, sunlight filtering through"
+            },
+            "reveal_type": "water_fill_reveal",
+            "time_structure": {
+                "0_1s": "Empty grass yard",
+                "1_4s": "Excavator carves pond shape",
+                "4_10s": "Liner, rocks, dock, viewing window installed",
+                "10_15s": "Water fills up, plants placed, underwater window view"
+            },
+            "camera_style": "drone_overhead",
+            "location_feel": "Northern European countryside",
+            "similarity_tags": ["pond", "swimming", "underwater_window", "dock", "excavation", "natural", "fish", "plants"],
+            "_concept_template": "water_creation",
         },
     ]
 
 
-def _parse_candidates_json(raw: str) -> list[dict]:
+def _select_templates(templates, history, count=10):
+    """Select concept templates, preferring recently unused ones."""
+    recent_ids = set()
+    for entry in history[-10:]:
+        sc = entry.get("scenario", {})
+        recent_ids.add(sc.get("_concept_template", ""))
+
+    fresh = [t for t in templates if t["id"] not in recent_ids]
+    stale = [t for t in templates if t["id"] in recent_ids]
+    random.shuffle(fresh)
+    random.shuffle(stale)
+
+    selected = fresh + stale
+    while len(selected) < count:
+        selected.append(random.choice(templates))
+    return selected[:count]
+
+
+def _select_camera(cameras, template, history):
+    """Select camera style based on template and recent usage."""
+    best_for_map = {}
+    for cam_id, cam_cfg in cameras.items():
+        best_for_map[cam_id] = cam_cfg
+
+    # Simple selection: pick a camera not used in last 3
+    recent_cams = []
+    for entry in history[-3:]:
+        sc = entry.get("scenario", {})
+        recent_cams.append(sc.get("camera_style", ""))
+
+    candidates = [(k, v) for k, v in cameras.items() if k not in recent_cams]
+    if not candidates:
+        candidates = list(cameras.items())
+
+    random.shuffle(candidates)
+    return candidates[0]
+
+
+def _get_overused_categories(stats, categories_config):
+    """Find over-represented categories."""
+    if not stats:
+        return []
+    total = sum(s.get("count", 0) for s in stats.values())
+    if total == 0:
+        return []
+    overused = []
+    for cat_id, cat_stats in stats.items():
+        actual = cat_stats.get("count", 0) / total
+        target = categories_config.get(cat_id, {}).get("target_ratio", 0.10)
+        if actual > target + 0.05:
+            overused.append(cat_id)
+    return overused
+
+
+def _parse_json(raw):
     """Extract JSON array from LLM response."""
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
-
     if "```json" in raw:
         raw = raw.split("```json")[1].split("```")[0].strip()
     elif "```" in raw:
         raw = raw.split("```")[1].split("```")[0].strip()
-
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse candidates JSON: %s", e)
+        logger.error("Failed to parse JSON: %s", e)
         return []
-
-
-def _get_overused_categories(
-    stats: dict,
-    categories_config: dict,
-) -> list[str]:
-    """Find categories that are over their target ratio."""
-    if not stats:
-        return []
-
-    total = sum(s.get("count", 0) for s in stats.values())
-    if total == 0:
-        return []
-
-    overused = []
-    for cat_id, cat_stats in stats.items():
-        actual_ratio = cat_stats.get("count", 0) / total
-        target = categories_config.get(cat_id, {}).get("target_ratio", 0.11)
-        if actual_ratio > target + 0.05:
-            overused.append(cat_id)
-
-    return overused
