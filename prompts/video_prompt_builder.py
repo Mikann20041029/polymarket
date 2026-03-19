@@ -1,9 +1,8 @@
 """
-Convert a selected scenario into a SINGLE video generation prompt.
+Convert a selected construction timelapse scenario into video generation prompts.
 
-1 video = 1 continuous clip = 10-15 seconds.
-No multi-clip. No story. Fixed camera.
-Also generates a single SFX prompt.
+1 video = 1 continuous 15-second timelapse clip.
+Construction process visible: workers, machinery, materials.
 """
 import json
 import logging
@@ -11,47 +10,45 @@ import logging
 logger = logging.getLogger(__name__)
 
 PROMPT_SYSTEM = """You are an expert at writing text-to-video prompts for AI video generation models.
-You convert scenario descriptions into a SINGLE precise video prompt.
+You convert construction timelapse scenario descriptions into a SINGLE precise video prompt.
 
 RULES:
-- ONE continuous clip, 10-15 seconds, NO cuts
-- Format: 9:16 vertical (phone recording)
-- Prompt MUST start with "Photorealistic video footage of..."
-- Camera is FIXED or near-fixed (natural tremor only, no panning/tracking)
-- The anomaly MUST be visible from the very first frame
-- Include: camera angle, lighting, weather, motion elements, atmospheric effects
-- Describe what is VISIBLE and MOVING throughout the entire 10-15 seconds
-- Use specific sensory details: colors, textures, materials
+- ONE continuous 15-second timelapse clip, NO cuts
+- Format: 9:16 vertical
+- Prompt MUST start with "Construction timelapse video..."
+- This is a TIME-LAPSE: everything moves at high speed
+- Workers, machinery, and materials MUST be described as visible
+- Include specific construction actions: digging, lifting, pouring, hammering, welding
+- Describe the FULL progression: empty/boring space → active construction → luxury reveal
+- Use specific sensory details: colors, textures, materials, lighting changes
 - NO text overlays, NO narration, NO dialogue
-- Prompt must be 80-150 words for maximum quality
-- Include motion keywords: "moving", "flowing", "shaking", "falling", "rushing"
-- Include atmosphere: smoke, dust, mist, spray, debris particles
-- Describe the PROGRESSION within the single shot:
-  * What's visible immediately (frame 1)
-  * How it intensifies over 5-10 seconds
-  * What the final seconds look like"""
+- Prompt must be 80-150 words
+- Include atmosphere keywords: dust, sparks, sunlight, shadows moving
+- Camera style must match the specified camera type
+- The REVEAL in the last 3-5 seconds should be visually stunning"""
 
-PROMPT_USER = """Convert this scenario into ONE single video prompt (10-15 second continuous shot).
+PROMPT_USER = """Convert this construction timelapse scenario into ONE video prompt (15-second continuous timelapse).
 
 SCENARIO:
 {scenario_json}
 
-Return ONLY a JSON object with this exact structure:
+Return ONLY a JSON object:
 {{
-  "video_prompt": "Photorealistic video footage of...",
-  "sfx_prompt": "<ambient/environmental sound for this scene, 15-25 words>",
+  "video_prompt": "Construction timelapse video...",
+  "sfx_prompt": "<ambient construction/reveal sound, 15-25 words>",
   "duration_seconds": {duration},
-  "description": "<brief human-readable summary of the shot>"
+  "description": "<brief human-readable summary>"
 }}
 
 CRITICAL:
-- ONE continuous shot, NO cuts, NO scene changes
-- Camera POV: {pov} - {pov_traits}
-- Camera is FIXED or near-fixed (minimal movement)
-- Anomaly visible from FIRST FRAME: {hook_description}
-- Peak moment at 5-10s: {peak_moment}
-- Final seconds: {aftermath}
-- The prompt must describe the ENTIRE 10-15 second progression in one paragraph"""
+- ONE continuous timelapse, NO cuts, NO scene changes
+- Camera style: {camera_style} - {camera_description}
+- 0-1s:   Before state: {before_desc}
+- 1-4s:   Construction start: {time_1_4s}
+- 4-10s:  Main build: {time_4_10s}
+- 10-15s: Finishing + reveal: {time_10_15s}
+- Workers and/or machinery MUST be visible during construction phases
+- The prompt must describe the ENTIRE 15-second timelapse progression in one paragraph"""
 
 
 def build_video_prompt(
@@ -59,18 +56,16 @@ def build_video_prompt(
     llm_client,
     config: dict,
 ) -> dict:
-    """
-    Generate a single video prompt from a scenario.
-
-    Returns dict with video_prompt, sfx_prompt, duration_seconds, description.
-    """
+    """Generate a video prompt from a construction timelapse scenario."""
     gen_config = config.get("generation", {})
     llm_config = config.get("llm", {})
-    duration = gen_config.get("duration_seconds", 14)
+    duration = gen_config.get("duration_seconds", 15)
 
-    povs = config.get("camera_povs", {})
-    pov_id = scenario.get("camera_pov", "tourist")
-    pov_cfg = povs.get(pov_id, {})
+    cameras = config.get("camera_styles", {})
+    cam_id = scenario.get("camera_style", "fixed_wide")
+    cam_cfg = cameras.get(cam_id, {})
+
+    time_struct = scenario.get("time_structure", {})
 
     scenario_json = json.dumps({
         k: v for k, v in scenario.items()
@@ -83,11 +78,12 @@ def build_video_prompt(
     prompt = PROMPT_USER.format(
         scenario_json=scenario_json,
         duration=duration,
-        pov=pov_id,
-        pov_traits=pov_cfg.get("camera_traits", "fixed camera"),
-        hook_description=scenario.get("opening_hook_description", ""),
-        peak_moment=scenario.get("peak_moment", ""),
-        aftermath=scenario.get("aftermath", ""),
+        camera_style=cam_id,
+        camera_description=cam_cfg.get("description", "fixed camera"),
+        before_desc=scenario.get("before_space", {}).get("description", ""),
+        time_1_4s=time_struct.get("1_4s", "construction begins"),
+        time_4_10s=time_struct.get("4_10s", "major build"),
+        time_10_15s=time_struct.get("10_15s", "finishing + reveal"),
     )
 
     try:
@@ -114,35 +110,48 @@ def build_video_prompt(
 
 
 def build_video_prompt_fallback(scenario: dict, config: dict) -> dict:
-    """Generate a single prompt without LLM (emergency fallback)."""
+    """Generate prompt without LLM (fallback)."""
     gen_config = config.get("generation", {})
-    duration = gen_config.get("duration_seconds", 14)
+    duration = gen_config.get("duration_seconds", 15)
 
-    pov = scenario.get("camera_pov", "tourist")
-    povs = config.get("camera_povs", {})
-    pov_traits = povs.get(pov, {}).get("camera_traits", "fixed camera")
-    location = scenario.get("location_style", "urban area")
-    weather = scenario.get("weather_atmosphere", "clear day")
-    hook = scenario.get("opening_hook_description", "anomaly visible")
-    peak = scenario.get("peak_moment", "event intensifies")
-    aftermath = scenario.get("aftermath", "aftermath visible")
-    sound = scenario.get("sound_atmosphere", "ambient atmosphere")
+    cam_id = scenario.get("camera_style", "fixed_wide")
+    cameras = config.get("camera_styles", {})
+    cam_traits = cameras.get(cam_id, {}).get("traits", "fixed wide angle")
+    location = scenario.get("location_feel", "suburban area")
+    before = scenario.get("before_space", {})
+    after = scenario.get("after_space", {})
+    proc = scenario.get("construction_process", {})
+    time_struct = scenario.get("time_structure", {})
+
+    stages_text = ", ".join(proc.get("stages", ["construction proceeds"])[:3])
+    machines = ", ".join(proc.get("heavy_machinery", [])) or "hand tools"
+    materials = ", ".join(proc.get("key_materials", []))
 
     video_prompt = (
-        f"Photorealistic video footage, {pov_traits}, "
-        f"shot in {location}, {weather}, 9:16 vertical phone recording. "
-        f"Fixed camera position, single continuous {duration}-second shot. "
-        f"From the very first frame: {hook}. "
-        f"Over the next several seconds the event intensifies: {peak}. "
-        f"In the final moments: {aftermath}. "
-        f"Natural lighting, atmospheric particles visible, realistic motion throughout."
+        f"Construction timelapse video, {cam_traits}, "
+        f"set in {location}, 9:16 vertical format. "
+        f"Single continuous {duration}-second timelapse shot. "
+        f"Opens on {before.get('description', 'empty space')}, "
+        f"{before.get('visual', 'dull and unremarkable')}. "
+        f"Construction begins rapidly: {stages_text}. "
+        f"Machinery visible: {machines}. Materials: {materials}. "
+        f"Workers moving at high speed throughout. "
+        f"Final reveal: {after.get('description', 'luxury finished space')}. "
+        f"{after.get('final_visual_hook', 'Stunning completed space')}. "
+        f"Dramatic lighting change at completion, photorealistic quality."
+    )
+
+    sfx_prompt = (
+        f"Construction timelapse sounds: machinery, hammering, "
+        f"power tools at high speed, then ambient reveal atmosphere, "
+        f"{duration} seconds"
     )
 
     return {
         "video_prompt": video_prompt,
-        "sfx_prompt": f"{sound}, continuous natural ambience, {duration} seconds",
+        "sfx_prompt": sfx_prompt,
         "duration_seconds": duration,
-        "description": scenario.get("scenario_summary", ""),
+        "description": scenario.get("one_line_concept", ""),
     }
 
 

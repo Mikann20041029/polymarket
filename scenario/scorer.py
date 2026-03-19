@@ -1,76 +1,72 @@
 """
-Buzz score calculation for scenario candidates.
+Construction timelapse scenario scoring.
 
-Uses LLM to evaluate each candidate against 7 criteria.
-Falls back to heuristic scoring if LLM is unavailable.
+8 criteria, 80 points max. Uses LLM or heuristic fallback.
 """
 import json
 import logging
 
 logger = logging.getLogger(__name__)
 
-SCORING_SYSTEM_PROMPT = """You are a viral short-form video scoring expert.
-You evaluate scenario concepts for their potential to go viral on YouTube Shorts / TikTok.
+SCORING_SYSTEM_PROMPT = """You are a viral construction timelapse YouTube Shorts scoring expert.
+You evaluate scenario concepts for rebornspacestv-style videos.
 
-IMPORTANT CONTEXT: Each video is a SINGLE continuous 10-15 second clip.
-Fixed camera. No cuts. No story. Anomaly visible within 0.5 seconds.
+WHAT THESE VIDEOS ARE:
+- 15-second construction timelapse showing a space being built/transformed
+- Workers, heavy machinery, tools, materials visible
+- High-speed time-lapse: digging, framing, pouring, tiling, finishing
+- Ends with luxury/hidden/amazing completed space
 
-Target audience: global viewers who stop scrolling for shocking, realistic-looking witness footage.
+Score each scenario on these 8 criteria (1-10 scale):
 
-Score each scenario on these 7 criteria (1-10 scale):
+1. one_line_concept_strength: Does the one-line concept make you NEED to watch?
+   10 = impossible to scroll past | 5 = interesting but not compelling | 1 = boring
 
-1. first_second_shock: Does the first frame (0.5s) make viewers STOP scrolling?
-   10 = impossible to scroll past  |  5 = interesting but not stopping  |  1 = boring opening
+2. first_second_clarity: Is the before-state instantly clear in 1 second?
+   10 = immediate understanding | 5 = takes a moment | 1 = confusing
 
-2. instant_clarity: Can viewers understand what's happening WITHOUT THINKING?
-   10 = zero thought needed, anyone in the world gets it instantly
-   5 = takes 2-3 seconds or requires some context
-   1 = confusing, need to think about what's happening
-   NOTE: If it requires any cultural knowledge, explanation, or context = max 5
+3. construction_process_satisfaction: Is the build process satisfying to watch in fast-forward?
+   10 = incredibly satisfying | 5 = okay | 1 = boring/unclear process
 
-3. scale_impact: Is the scale dramatic? Giant objects, vast phenomena, human-vs-nature contrast?
-   10 = jaw-dropping scale  |  5 = moderate  |  1 = small/mundane
+4. reveal_satisfaction: Does the final reveal deliver a wow moment?
+   10 = jaw-dropping | 5 = nice but expected | 1 = underwhelming
 
-4. realism_potential: Can a SINGLE 10-15s AI video clip render this as one continuous shot?
-   10 = mostly atmospheric/distant, minimal complex motion, fixed camera works perfectly
-   5 = some tricky elements but possible
-   1 = requires perfect human faces, complex physics, or camera movement
+5. realism_believability: Could this actually be built? Does it look real?
+   10 = totally real | 5 = stretch but possible | 1 = impossible fantasy
 
-5. curiosity_gap: Will viewers wonder "Where is this?" or "Is this real?"
-   10 = absolutely  |  5 = somewhat  |  1 = obviously fake/uninteresting
+6. luxury_desire: Do viewers want this space for themselves?
+   10 = dream space | 5 = cool but not personally desired | 1 = no appeal
 
-6. uniqueness: Is this unlike content commonly seen on YouTube/TikTok?
-   10 = never seen before  |  5 = somewhat rare  |  1 = overdone
+7. uniqueness_vs_history: Is this unlike previous videos?
+   10 = never seen before | 5 = somewhat fresh | 1 = overdone
 
-7. replay_potential: Will viewers rewatch or share?
-   10 = must share  |  5 = might rewatch  |  1 = one and done
+8. loop_rewatch_potential: Will viewers watch again or share?
+   10 = must share/rewatch | 5 = might rewatch | 1 = one and done
 
-IMPORTANT: Be strict. Most scenarios should score 5-7. Only truly exceptional concepts get 9-10.
-A score of 8+ on first_second_shock means the opening is genuinely shocking.
-instant_clarity of 7+ means a 5-year-old could understand what's happening."""
+IMPORTANT: Be strict. Most scenarios should score 5-7. Only truly exceptional get 9-10."""
 
-SCORING_USER_PROMPT = """Score these scenario candidates. Return ONLY a JSON array.
+SCORING_USER_PROMPT = """Score these construction timelapse scenario candidates. Return ONLY a JSON array.
 
 Candidates:
 {candidates_json}
 
-Return format (JSON array, one object per candidate):
+Return format:
 [
   {{
     "candidate_index": 0,
     "scores": {{
-      "first_second_shock": <1-10>,
-      "instant_clarity": <1-10>,
-      "scale_impact": <1-10>,
-      "realism_potential": <1-10>,
-      "curiosity_gap": <1-10>,
-      "uniqueness": <1-10>,
-      "replay_potential": <1-10>
+      "one_line_concept_strength": <1-10>,
+      "first_second_clarity": <1-10>,
+      "construction_process_satisfaction": <1-10>,
+      "reveal_satisfaction": <1-10>,
+      "realism_believability": <1-10>,
+      "luxury_desire": <1-10>,
+      "uniqueness_vs_history": <1-10>,
+      "loop_rewatch_potential": <1-10>
     }},
     "total": <sum>,
-    "brief_note": "<one sentence on strongest/weakest aspect>"
-  }},
-  ...
+    "brief_note": "<one sentence>"
+  }}
 ]"""
 
 
@@ -79,37 +75,24 @@ def score_candidates_llm(
     llm_client,
     config: dict,
 ) -> list[dict]:
-    """
-    Score candidates using LLM. Attaches buzz_score to each candidate.
-
-    Args:
-        candidates: list of scenario dicts
-        llm_client: OpenAI-compatible client
-        config: full config dict
-
-    Returns:
-        candidates with buzz_score attached
-    """
+    """Score candidates using LLM. Attaches scores to each candidate."""
     if not candidates:
         return candidates
 
     llm_config = config.get("llm", {})
-    scoring_config = config.get("scoring", {})
 
-    # Prepare summaries for scoring (don't send full metadata)
     summaries = []
     for i, c in enumerate(candidates):
         summaries.append({
             "index": i,
+            "one_line_concept": c.get("one_line_concept", ""),
             "category": c.get("category", ""),
-            "event_type": c.get("event_type", ""),
-            "camera_pov": c.get("camera_pov", ""),
-            "opening_hook_type": c.get("opening_hook_type", ""),
-            "opening_hook_description": c.get("opening_hook_description", ""),
-            "scenario_summary": c.get("scenario_summary", ""),
-            "escalation_pattern": c.get("escalation_pattern", ""),
-            "climax_type": c.get("climax_type", ""),
-            "aftermath_type": c.get("aftermath_type", ""),
+            "construction_type": c.get("construction_type", ""),
+            "before_space": c.get("before_space", {}),
+            "construction_process": c.get("construction_process", {}),
+            "after_space": c.get("after_space", {}),
+            "reveal_type": c.get("reveal_type", ""),
+            "location_feel": c.get("location_feel", ""),
         })
 
     user_prompt = SCORING_USER_PROMPT.format(
@@ -128,7 +111,6 @@ def score_candidates_llm(
         )
         raw = response.choices[0].message.content.strip()
 
-        # Extract JSON from response
         if "```json" in raw:
             raw = raw.split("```json")[1].split("```")[0].strip()
         elif "```" in raw:
@@ -143,17 +125,15 @@ def score_candidates_llm(
                 candidates[idx]["buzz_total"] = score_entry.get("total", 0)
                 candidates[idx]["buzz_note"] = score_entry.get("brief_note", "")
 
-        # Validate totals
+        # Recalculate totals for accuracy
         for c in candidates:
             if "buzz_score" in c:
-                actual_total = sum(c["buzz_score"].values())
-                c["buzz_total"] = actual_total
+                c["buzz_total"] = sum(c["buzz_score"].values())
 
     except Exception as e:
         logger.error("LLM scoring failed: %s. Using heuristic fallback.", e)
         candidates = score_candidates_heuristic(candidates)
 
-    # Mark candidates without scores
     for c in candidates:
         if "buzz_score" not in c:
             c["buzz_score"] = {}
@@ -164,59 +144,60 @@ def score_candidates_llm(
 
 
 def score_candidates_heuristic(candidates: list[dict]) -> list[dict]:
-    """
-    Fallback heuristic scoring when LLM is unavailable.
-
-    Uses simple rules based on metadata to estimate buzz potential.
-    Less accurate but costs nothing.
-    """
+    """Fallback heuristic scoring for offline/dry mode."""
     for c in candidates:
         scores = {}
 
-        # first_second_shock: based on hook type
-        high_shock_hooks = {
-            "massive_object_too_close", "collapse_already_started",
-            "animal_proximity", "scale_reveal",
-        }
-        hook = c.get("opening_hook_type", "")
-        scores["first_second_shock"] = 8 if hook in high_shock_hooks else 6
+        # one_line_concept_strength: longer, more specific = better
+        concept = c.get("one_line_concept", "")
+        scores["one_line_concept_strength"] = 7 if len(concept) > 40 else 6
 
-        # instant_clarity: penalize abstract scenarios
-        summary = c.get("scenario_summary", "").lower()
-        if any(w in summary for w in ["mysterious", "strange", "unknown", "unexplained"]):
-            scores["instant_clarity"] = 5
+        # first_second_clarity: based on before_space description
+        before = c.get("before_space", {})
+        if before.get("description", "") and before.get("visual", ""):
+            scores["first_second_clarity"] = 7
         else:
-            scores["instant_clarity"] = 7
+            scores["first_second_clarity"] = 5
 
-        # scale_impact: based on visual tags
-        big_tags = {"giant", "massive", "enormous", "huge", "towering", "colossal"}
-        vtags = set(t.lower() for t in c.get("visual_tags", []))
-        scores["scale_impact"] = 8 if vtags & big_tags else 6
-
-        # realism_potential: single continuous clip, fixed camera
-        pov = c.get("camera_pov", "")
-        cam = c.get("camera_movement", "").lower()
-        if pov in ("drone", "balcony", "interior", "dashcam"):
-            scores["realism_potential"] = 8  # distant/fixed = easier to render
-        elif "fixed" in cam or "mounted" in cam:
-            scores["realism_potential"] = 7
-        elif pov in ("street", "tourist"):
-            scores["realism_potential"] = 6
+        # construction_process_satisfaction: more stages + machinery = better
+        proc = c.get("construction_process", {})
+        stages = len(proc.get("stages", []))
+        machines = len(proc.get("heavy_machinery", []))
+        if stages >= 5 and machines >= 2:
+            scores["construction_process_satisfaction"] = 8
+        elif stages >= 4 and machines >= 1:
+            scores["construction_process_satisfaction"] = 7
         else:
-            scores["realism_potential"] = 7
+            scores["construction_process_satisfaction"] = 6
 
-        # curiosity_gap: location specificity helps
-        loc = c.get("location_style", "")
-        if loc and len(loc) > 10:
-            scores["curiosity_gap"] = 7
+        # reveal_satisfaction: based on reveal type and luxury level
+        after = c.get("after_space", {})
+        luxury = after.get("luxury_level", "medium")
+        if luxury == "ultra":
+            scores["reveal_satisfaction"] = 8
+        elif luxury == "high":
+            scores["reveal_satisfaction"] = 7
         else:
-            scores["curiosity_gap"] = 5
+            scores["reveal_satisfaction"] = 6
 
-        # uniqueness: assume moderate by default
-        scores["uniqueness"] = 6
+        # realism_believability
+        scores["realism_believability"] = 7
 
-        # replay_potential: assume moderate
-        scores["replay_potential"] = 6
+        # luxury_desire: ultra/high luxury + water = desirable
+        if luxury in ("ultra", "high") and after.get("water_element", False):
+            scores["luxury_desire"] = 8
+        elif luxury in ("ultra", "high"):
+            scores["luxury_desire"] = 7
+        else:
+            scores["luxury_desire"] = 6
+
+        # uniqueness_vs_history: default moderate
+        scores["uniqueness_vs_history"] = 6
+
+        # loop_rewatch_potential
+        reveal = c.get("reveal_type", "")
+        high_rewatch = {"mechanical_reveal", "hidden_entrance_reveal", "water_fill_reveal"}
+        scores["loop_rewatch_potential"] = 7 if reveal in high_rewatch else 6
 
         c["buzz_score"] = scores
         c["buzz_total"] = sum(scores.values())
@@ -231,28 +212,28 @@ def filter_by_score(
 ) -> list[dict]:
     """Remove candidates below minimum score thresholds."""
     scoring_config = config.get("scoring", {})
-    min_total = scoring_config.get("min_total_score", 45)
-    min_hook = scoring_config.get("min_hook_score", 7)
-    min_clarity = scoring_config.get("min_clarity_score", 7)
+    min_total = scoring_config.get("min_total_score", 50)
+    min_concept = scoring_config.get("min_concept_score", 7)
+    min_process = scoring_config.get("min_process_score", 6)
 
     passed = []
     for c in candidates:
         total = c.get("buzz_total", 0)
         scores = c.get("buzz_score", {})
-        hook_score = scores.get("first_second_shock", 0)
-        clarity_score = scores.get("instant_clarity", 0)
+        concept_score = scores.get("one_line_concept_strength", 0)
+        process_score = scores.get("construction_process_satisfaction", 0)
 
         if total < min_total:
             c["_rejected"] = True
             c["_reject_reason"] = f"buzz_total {total} < {min_total}"
             continue
-        if hook_score < min_hook:
+        if concept_score < min_concept:
             c["_rejected"] = True
-            c["_reject_reason"] = f"first_second_shock {hook_score} < {min_hook}"
+            c["_reject_reason"] = f"concept_strength {concept_score} < {min_concept}"
             continue
-        if clarity_score < min_clarity:
+        if process_score < min_process:
             c["_rejected"] = True
-            c["_reject_reason"] = f"instant_clarity {clarity_score} < {min_clarity}"
+            c["_reject_reason"] = f"process_satisfaction {process_score} < {min_process}"
             continue
 
         passed.append(c)

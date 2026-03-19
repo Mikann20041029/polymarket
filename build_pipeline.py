@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-Witness-type Shock Video Generation Pipeline.
+Construction Timelapse Luxury Transformation Video Pipeline.
 
-CLI entry point for the scenario generation system.
-Default mode is dry-run (no paid API calls).
+rebornspacestv-style: construction process + luxury reveal shorts.
 
 Usage:
     # Full dry-run with hardcoded examples (no API needed)
-    python witness_pipeline.py --offline
+    python build_pipeline.py --offline
 
     # Dry-run with LLM candidate generation (DeepSeek only, ~$0.003)
-    python witness_pipeline.py --dry-run
+    python build_pipeline.py --dry-run
 
     # Generate video (requires approval + all API keys)
-    python witness_pipeline.py --generate
+    python build_pipeline.py --generate
 """
 import argparse
 import json
@@ -50,20 +49,16 @@ def setup_logging(verbose: bool = False) -> None:
 def create_llm_client(config: dict):
     """Create OpenAI-compatible client for DeepSeek."""
     from openai import OpenAI
-
-    llm_config = config.get("llm", {})
-    api_key = None
-
-    # Try loading from env
     import os
     from dotenv import load_dotenv
     load_dotenv()
-    api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
     if not api_key:
         logging.error("DEEPSEEK_API_KEY not set. Use --offline for no-API mode.")
         sys.exit(1)
 
+    llm_config = config.get("llm", {})
     return OpenAI(
         api_key=api_key,
         base_url=llm_config.get("base_url", "https://api.deepseek.com"),
@@ -71,10 +66,7 @@ def create_llm_client(config: dict):
 
 
 def run_offline(config: dict) -> None:
-    """
-    Fully offline dry-run. No API calls at all.
-    Uses hardcoded example candidates to demonstrate the full pipeline.
-    """
+    """Fully offline dry-run. No API calls at all."""
     from scenario.generator import generate_candidates_dry
     from scenario.similarity import filter_candidates
     from scenario.scorer import score_candidates_heuristic, filter_by_score
@@ -84,16 +76,15 @@ def run_offline(config: dict) -> None:
     from scenario.selector import load_history, select_best, record_selection
     from prompts.video_prompt_builder import build_video_prompt_dry
 
-    logger = logging.getLogger("witness")
+    logger = logging.getLogger("build")
 
-    # Load state
     history = load_history(HISTORY_PATH)
     stats = load_category_stats(CATEGORY_STATS_PATH)
 
     logger.info("=== OFFLINE DRY-RUN (no API calls) ===")
-    logger.info("History: %d past videos", len(history))
+    logger.info("History: %d past builds", len(history))
 
-    # Stage 1+2: Get example candidates
+    # Stage 1+2: Hardcoded example candidates
     candidates = generate_candidates_dry(config)
     logger.info("Candidates: %d (hardcoded examples)", len(candidates))
 
@@ -101,7 +92,7 @@ def run_offline(config: dict) -> None:
     passed = filter_candidates(candidates, history, config)
     logger.info("After similarity filter: %d/%d", len(passed), len(candidates))
 
-    # Heuristic scoring (no LLM)
+    # Heuristic scoring
     passed = score_candidates_heuristic(passed)
     passed = filter_by_score(passed, config)
     logger.info("After score filter: %d", len(passed))
@@ -124,7 +115,7 @@ def run_offline(config: dict) -> None:
     # Generate video prompt (fallback, no LLM)
     prompts = build_video_prompt_dry(winner, config)
 
-    # Output results
+    # Output
     _print_results(winner, prompts, config)
     _save_run_output(winner, prompts)
 
@@ -133,10 +124,7 @@ def run_offline(config: dict) -> None:
 
 
 def run_dry(config: dict) -> None:
-    """
-    Dry-run with LLM. Generates real candidates via DeepSeek (~$0.003 total).
-    Does NOT generate any videos or audio (no fal.ai / ElevenLabs calls).
-    """
+    """Dry-run with LLM. DeepSeek only (~$0.003)."""
     from scenario.generator import generate_candidates
     from scenario.similarity import filter_candidates
     from scenario.scorer import score_candidates_llm, filter_by_score
@@ -146,17 +134,16 @@ def run_dry(config: dict) -> None:
     from scenario.selector import load_history, select_best, record_selection
     from prompts.video_prompt_builder import build_video_prompt
 
-    logger = logging.getLogger("witness")
+    logger = logging.getLogger("build")
     client = create_llm_client(config)
 
-    # Load state
     history = load_history(HISTORY_PATH)
     stats = load_category_stats(CATEGORY_STATS_PATH)
 
     logger.info("=== DRY-RUN (DeepSeek LLM only, ~$0.003) ===")
-    logger.info("History: %d past videos", len(history))
+    logger.info("History: %d past builds", len(history))
 
-    # Stage 1+2: Generate candidates via LLM
+    # Generate candidates via LLM
     candidates = generate_candidates(client, config, history, stats)
     logger.info("Candidates generated: %d", len(candidates))
 
@@ -183,7 +170,7 @@ def run_dry(config: dict) -> None:
         logger.error("No candidates survived filtering. Adjust config thresholds.")
         sys.exit(1)
 
-    # Record to history
+    # Record
     history = record_selection(winner, history, HISTORY_PATH)
     stats = update_stats_after_selection(winner, stats, categories_config)
     save_category_stats(stats, CATEGORY_STATS_PATH)
@@ -191,20 +178,17 @@ def run_dry(config: dict) -> None:
     # Generate video prompt via LLM
     prompts = build_video_prompt(winner, client, config)
 
-    # Output results
+    # Output
     _print_results(winner, prompts, config)
     _save_run_output(winner, prompts)
 
     logger.info("=== DRY-RUN COMPLETE ===")
     logger.info("Estimated cost: ~$0.003 (DeepSeek LLM calls only)")
-    logger.info("No video/audio generation. No fal.ai or ElevenLabs charges.")
 
 
 def run_generate(config: dict) -> None:
-    """
-    Full generation mode. LOCKED behind dry_run config flag.
-    """
-    logger = logging.getLogger("witness")
+    """Full generation mode. LOCKED behind dry_run config flag."""
+    logger = logging.getLogger("build")
 
     if config.get("dry_run", True):
         logger.error(
@@ -213,67 +197,86 @@ def run_generate(config: dict) -> None:
         )
         sys.exit(1)
 
-    logger.error(
-        "Full video generation not yet implemented. "
-        "This will be enabled after Phase 1 approval."
-    )
+    logger.error("Full video generation not yet implemented.")
     sys.exit(1)
 
 
 def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
     """Print formatted results to stdout."""
     gen_config = config.get("generation", {})
-    duration = gen_config.get("duration_seconds", 14)
+    duration = gen_config.get("duration_seconds", 15)
 
     print("\n" + "=" * 70)
-    print("  SELECTED SCENARIO (single continuous shot)")
+    print("  SELECTED CONSTRUCTION TIMELAPSE SCENARIO")
     print("=" * 70)
+    print(f"  Concept:     {scenario.get('one_line_concept', 'N/A')}")
     print(f"  Category:    {scenario.get('category', 'N/A')}")
-    print(f"  Event:       {scenario.get('event_type', 'N/A')}")
-    print(f"  POV:         {scenario.get('camera_pov', 'N/A')}")
-    print(f"  Camera:      {scenario.get('camera_movement', 'N/A')}")
-    print(f"  Hook:        {scenario.get('opening_hook_type', 'N/A')}")
-    print(f"  Location:    {scenario.get('location_style', 'N/A')}")
-    print(f"  Time:        {scenario.get('time_of_day', 'N/A')}")
-    print(f"  Weather:     {scenario.get('weather_atmosphere', 'N/A')}")
-    print(f"  Duration:    {duration}s (single clip, no cuts)")
+    print(f"  Build type:  {scenario.get('construction_type', 'N/A')}")
+    print(f"  Camera:      {scenario.get('camera_style', 'N/A')}")
+    print(f"  Reveal:      {scenario.get('reveal_type', 'N/A')}")
+    print(f"  Location:    {scenario.get('location_feel', 'N/A')}")
+    print(f"  Duration:    {duration}s (single timelapse clip)")
     print()
-    print(f"  Summary:")
-    print(f"    {scenario.get('scenario_summary', 'N/A')}")
+
+    # Before space
+    before = scenario.get("before_space", {})
+    print(f"  BEFORE (0-1s):")
+    print(f"    {before.get('description', 'N/A')}")
+    print(f"    Visual: {before.get('visual', 'N/A')}")
     print()
-    print(f"  0.0-0.5s  HOOK:")
-    print(f"    {scenario.get('opening_hook_description', 'N/A')}")
-    print(f"  5.0-10.0s PEAK:")
-    print(f"    {scenario.get('peak_moment', 'N/A')}")
-    print(f"  10.0-{duration}s AFTERMATH:")
-    print(f"    {scenario.get('aftermath', 'N/A')}")
+
+    # Construction process
+    proc = scenario.get("construction_process", {})
+    print(f"  CONSTRUCTION PROCESS (1-10s):")
+    for i, stage in enumerate(proc.get("stages", []), 1):
+        print(f"    {i}. {stage}")
+    print(f"    Machinery:  {', '.join(proc.get('heavy_machinery', [])) or 'none'}")
+    print(f"    Workers:    {proc.get('worker_presence', 'N/A')}")
+    print(f"    Materials:  {', '.join(proc.get('key_materials', []))}")
+    print(f"    Excavation: {'yes' if proc.get('excavation_required') else 'no'}")
     print()
+
+    # After space
+    after = scenario.get("after_space", {})
+    print(f"  REVEAL (10-15s):")
+    print(f"    {after.get('description', 'N/A')}")
+    print(f"    Luxury:     {after.get('luxury_level', 'N/A')}")
+    print(f"    Water:      {'yes' if after.get('water_element') else 'no'}")
+    print(f"    Hook:       {after.get('final_visual_hook', 'N/A')}")
+    print()
+
+    # Time structure
+    ts = scenario.get("time_structure", {})
+    if ts:
+        print(f"  TIME STRUCTURE:")
+        print(f"    0-1s:   {ts.get('0_1s', 'N/A')}")
+        print(f"    1-4s:   {ts.get('1_4s', 'N/A')}")
+        print(f"    4-10s:  {ts.get('4_10s', 'N/A')}")
+        print(f"    10-15s: {ts.get('10_15s', 'N/A')}")
+        print()
 
     # Scores
     buzz = scenario.get("buzz_score", {})
     if buzz:
-        print("  Buzz Score:")
+        print("  SCORE:")
         for k, v in buzz.items():
             bar = "#" * v + "." * (10 - v)
-            print(f"    {k:25s} [{bar}] {v}/10")
-        print(f"    {'TOTAL':25s}       {scenario.get('buzz_total', 0)}/70")
-        print(f"    {'Category bonus':25s}       {scenario.get('category_bonus', 0):+.1f}")
-        print(f"    {'Adjusted score':25s}       {scenario.get('adjusted_score', 0):.1f}")
+            print(f"    {k:40s} [{bar}] {v}/10")
+        print(f"    {'TOTAL':40s}       {scenario.get('buzz_total', 0)}/80")
+        print(f"    {'Category bonus':40s}       {scenario.get('category_bonus', 0):+.1f}")
+        print(f"    {'Adjusted score':40s}       {scenario.get('adjusted_score', 0):.1f}")
     print()
 
-    # Visual/tone tags
-    print(f"  Visual tags: {', '.join(scenario.get('visual_tags', []))}")
-    print(f"  Tone tags:   {', '.join(scenario.get('tone_tags', []))}")
-    print(f"  Colors:      {', '.join(scenario.get('dominant_colors', []))}")
-    print(f"  Sound:       {scenario.get('sound_atmosphere', 'N/A')}")
+    # Tags
+    print(f"  Tags: {', '.join(scenario.get('similarity_tags', []))}")
     print()
 
-    # Video prompt (single)
+    # Video prompt
     video_prompt = prompts.get("video_prompt", "")
     sfx_prompt = prompts.get("sfx_prompt", "")
     if video_prompt:
         print("-" * 70)
-        print("  VIDEO PROMPT (single continuous shot)")
+        print("  VIDEO PROMPT (single 15s timelapse)")
         print("-" * 70)
         print(f"  {video_prompt}")
         print()
@@ -294,12 +297,12 @@ def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
 
 
 def _save_run_output(scenario: dict, prompts: dict) -> None:
-    """Save run output to file for review."""
+    """Save run output to file."""
     output_dir = BASE_DIR / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now(timezone.utc)
-    filename = f"witness_plan_{now.strftime('%Y%m%d_%H%M%S')}.json"
+    filename = f"build_plan_{now.strftime('%Y%m%d_%H%M%S')}.json"
 
     output = {
         "created_at": now.isoformat(),
@@ -315,12 +318,12 @@ def _save_run_output(scenario: dict, prompts: dict) -> None:
     with open(path, "w") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
 
-    logging.getLogger("witness").info("Run output saved to: %s", path)
+    logging.getLogger("build").info("Run output saved to: %s", path)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Witness-type Shock Video Generation System",
+        description="Construction Timelapse Luxury Transformation Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Modes:
@@ -353,7 +356,6 @@ Modes:
     args = parser.parse_args()
     setup_logging(args.verbose)
 
-    # Load config
     config_path = Path(args.config)
     if not config_path.exists():
         print(f"Config not found: {config_path}", file=sys.stderr)
@@ -362,7 +364,6 @@ Modes:
     with open(config_path) as f:
         config = yaml.safe_load(f)
 
-    # Route to appropriate mode
     if args.generate:
         run_generate(config)
     elif args.offline:
