@@ -49,6 +49,7 @@ def _scale_to_vertical(video_path: str, output_path: str) -> str:
             f"setsar=1"
         ),
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-pix_fmt", "yuv420p",
         "-an",
         output_path,
     ]
@@ -104,6 +105,7 @@ def _add_text_overlay(video_path: str, text: str, output_path: str) -> str:
         "-i", video_path,
         "-vf", drawtext,
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         output_path,
     ]
@@ -223,6 +225,7 @@ def _concatenate_with_crossfade(clips: list[str], output_path: str) -> str:
             f"[0:a][1:a]acrossfade=d={fade_dur}[a]",
             "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",
             output_path,
@@ -263,6 +266,7 @@ def _concatenate_with_crossfade(clips: list[str], output_path: str) -> str:
             "-filter_complex", filter_complex,
             "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart",
             output_path,
