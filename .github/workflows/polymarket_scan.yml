@@ -6,7 +6,7 @@ on:
       mode:
         description: "Run mode: offline (no API), dry-run (LLM only), generate (full)"
         required: false
-        default: "dry-run"
+        default: "generate"
         type: choice
         options:
           - offline
@@ -41,6 +41,10 @@ jobs:
         if: ${{ github.event.inputs.mode != 'offline' }}
         run: |
           test -n "${{ secrets.DEEPSEEK_API_KEY }}" || { echo "::error::Missing DEEPSEEK_API_KEY"; exit 1; }
+          if [ "${{ github.event.inputs.mode || 'generate' }}" = "generate" ]; then
+            test -n "${{ secrets.FAL_KEY }}" || { echo "::error::Missing FAL_KEY (needed for video generation)"; exit 1; }
+            test -n "${{ secrets.ELEVENLABS_API_KEY }}" || { echo "::error::Missing ELEVENLABS_API_KEY (needed for SFX)"; exit 1; }
+          fi
 
       - name: Generate construction timelapse short
         timeout-minutes: 35
@@ -49,7 +53,7 @@ jobs:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           FAL_KEY: ${{ secrets.FAL_KEY }}
         run: |
-          MODE="${{ github.event.inputs.mode || 'dry-run' }}"
+          MODE="${{ github.event.inputs.mode || 'generate' }}"
           if [ "$MODE" = "offline" ]; then
             python build_pipeline.py --offline --verbose
           elif [ "$MODE" = "generate" ]; then

@@ -213,7 +213,7 @@ camera_styles:
     best_for: ["underground", "sunken", "pool", "excavation"]
 
 # ── Dry Run ──────────────────────────────────────────────
-dry_run: true
+dry_run: false
 
 # ── Video Generation (locked behind dry_run) ─────────────
 video:
