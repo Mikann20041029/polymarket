@@ -72,6 +72,85 @@ def create_llm_client(config: dict):
     )
 
 
+def run_template(config: dict, force_template: str | None = None) -> None:
+    """Template-based generation. Picks 1 of 5 reference templates, fills variables.
+
+    NO API calls needed. Pure deterministic template + random variables.
+    Produces multi-stage prompts that faithfully reproduce reference video structure.
+    """
+    from prompts.templates.lottery import TemplateLottery, print_lottery_info
+
+    logger = logging.getLogger("build")
+
+    logger.info("=== TEMPLATE LOTTERY MODE (no API needed) ===")
+    print_lottery_info()
+
+    lottery = TemplateLottery()
+    result = lottery.draw(force_template=force_template)
+
+    # Print results
+    print("\n" + "=" * 70)
+    print("  TEMPLATE LOTTERY RESULT")
+    print("=" * 70)
+    print(f"  Template:  {result['template_name']}")
+    print(f"  Reference: {result['reference_video']}")
+    print(f"  Duration:  {result['total_duration_seconds']}s")
+    print(f"  Stages:    {result['num_stages']}")
+    print()
+
+    print("  RESOLVED VARIABLES:")
+    for k, val in result["variables"].items():
+        print(f"    {k:30s} = {val}")
+    print()
+
+    print("-" * 70)
+    print("  STAGE PROMPTS")
+    print("-" * 70)
+    for stage in result["stages"]:
+        name = stage["name"].upper()
+        dur = stage["duration_seconds"]
+        wc = len(stage["video_prompt"].split())
+        print(f"\n  [{name}] ({dur}s, {wc} words)")
+        print(f"    Camera: {stage.get('camera', 'see prompt')[:100]}...")
+        print(f"    Video:  {stage['video_prompt']}")
+        print(f"    SFX:    {stage['sfx_prompt']}")
+    print()
+
+    # Save output
+    _save_template_output(result)
+
+    logger.info("=== TEMPLATE LOTTERY COMPLETE ===")
+    logger.info("No money spent. No API calls made.")
+    logger.info("Run with --generate --template to produce actual video.")
+
+
+def _save_template_output(result: dict) -> None:
+    """Save template lottery output."""
+    output_dir = BASE_DIR / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc)
+    filename = f"template_{result['template_id']}_{now.strftime('%Y%m%d_%H%M%S')}.json"
+
+    output = {
+        "created_at": now.isoformat(),
+        "mode": "template_lottery",
+        "template_id": result["template_id"],
+        "template_name": result["template_name"],
+        "reference_video": result["reference_video"],
+        "total_duration_seconds": result["total_duration_seconds"],
+        "variables": result["variables"],
+        "stages": result["stages"],
+        "status": "planned",
+    }
+
+    path = output_dir / filename
+    with open(path, "w") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    logging.getLogger("build").info("Template output saved to: %s", path)
+
+
 def run_offline(config: dict) -> None:
     """Fully offline dry-run. No API calls at all."""
     from scenario.generator import generate_candidates_dry
@@ -480,10 +559,20 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Modes:
+  --template   Template lottery. Picks 1 of 5 reference templates, fills variables. No API.
   --offline    Fully offline. No API calls. Uses hardcoded examples.
   --dry-run    LLM-only mode. Generates real candidates via DeepSeek (~$0.003).
   --generate   Full video generation. 3 clips + 3 SFX + compositing.
         """,
+    )
+    parser.add_argument(
+        "--template", action="store_true",
+        help="Template lottery mode: pick 1 of 5 reference templates, fill variables (no API)",
+    )
+    parser.add_argument(
+        "--force-template", type=str, default=None,
+        choices=["pool_vehicle", "resin_table", "fiber_optic_floor", "garden_strip", "pool_megastructure"],
+        help="Force a specific template instead of lottery",
     )
     parser.add_argument(
         "--offline", action="store_true",
@@ -519,6 +608,8 @@ Modes:
 
     if args.generate:
         run_generate(config)
+    elif args.template or args.force_template:
+        run_template(config, force_template=args.force_template)
     elif args.offline:
         run_offline(config)
     else:
