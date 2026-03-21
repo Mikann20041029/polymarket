@@ -187,18 +187,118 @@ def run_dry(config: dict) -> None:
 
 
 def run_generate(config: dict) -> None:
-    """Full generation mode. LOCKED behind dry_run config flag."""
-    logger = logging.getLogger("build")
+    """Full generation: scenario → video clip → SFX → compose final video."""
+    from scenario.generator import generate_candidates
+    from scenario.similarity import filter_candidates
+    from scenario.scorer import score_candidates_llm, filter_by_score
+    from scenario.balancer import (
+        load_category_stats, adjust_scores, update_stats_after_selection, save_category_stats,
+    )
+    from scenario.selector import load_history, select_best, record_selection
+    from prompts.video_prompt_builder import build_video_prompt
+    from videogen.wan import generate_clip, check_fal_balance
+    from sfx.elevenlabs_sfx import generate_sfx
+    from postprocess.effects import compose_final_video
 
-    if config.get("dry_run", True):
-        logger.error(
-            "BLOCKED: dry_run=true in config.yaml. "
-            "Set dry_run: false ONLY after explicit owner approval."
-        )
+    logger = logging.getLogger("build")
+    client = create_llm_client(config)
+
+    history = load_history(HISTORY_PATH)
+    stats = load_category_stats(CATEGORY_STATS_PATH)
+
+    logger.info("=== FULL GENERATION MODE ===")
+    logger.info("History: %d past builds", len(history))
+
+    # ── Stage 1: Scenario selection (same as dry-run) ────
+    candidates = generate_candidates(client, config, history, stats)
+    logger.info("Candidates generated: %d", len(candidates))
+
+    if not candidates:
+        logger.error("No candidates generated. Check API key and connectivity.")
         sys.exit(1)
 
-    logger.error("Full video generation not yet implemented.")
-    sys.exit(1)
+    passed = filter_candidates(candidates, history, config)
+    logger.info("After similarity filter: %d/%d", len(passed), len(candidates))
+
+    passed = score_candidates_llm(passed, client, config)
+    passed = filter_by_score(passed, config)
+    logger.info("After score filter: %d", len(passed))
+
+    categories_config = config.get("categories", {})
+    passed = adjust_scores(passed, stats, categories_config)
+
+    winner = select_best(passed)
+    if not winner:
+        logger.error("No candidates survived filtering. Adjust config thresholds.")
+        sys.exit(1)
+
+    history = record_selection(winner, history, HISTORY_PATH)
+    stats = update_stats_after_selection(winner, stats, categories_config)
+    save_category_stats(stats, CATEGORY_STATS_PATH)
+
+    # ── Stage 2: Generate video prompt via LLM ───────────
+    prompts = build_video_prompt(winner, client, config)
+    _print_results(winner, prompts, config)
+
+    video_prompt = prompts.get("video_prompt", "")
+    sfx_prompt = prompts.get("sfx_prompt", "")
+    duration = prompts.get("duration_seconds", 15)
+
+    if not video_prompt:
+        logger.error("No video prompt generated.")
+        sys.exit(1)
+
+    # ── Stage 3: Check balance ───────────────────────────
+    if not check_fal_balance(1):
+        logger.error("Insufficient fal.ai balance. Top up and retry.")
+        sys.exit(1)
+
+    # ── Stage 4: Generate video clip via Wan 2.1 ─────────
+    output_dir = BASE_DIR / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = output_dir / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    clip_path = temp_dir / "clip_01.mp4"
+    logger.info("Generating video clip via fal.ai Wan 2.1...")
+    generate_clip(video_prompt, clip_path)
+    logger.info("Video clip generated: %s", clip_path)
+
+    # ── Stage 5: Generate SFX via ElevenLabs ─────────────
+    sfx_path = temp_dir / "sfx_01.mp3"
+    logger.info("Generating SFX via ElevenLabs...")
+    sfx_result = generate_sfx(
+        prompt=sfx_prompt,
+        output_path=sfx_path,
+        duration=duration,
+    )
+    logger.info("SFX generated: %s", sfx_result["audio_path"])
+
+    # ── Stage 6: Compose final video ─────────────────────
+    now = datetime.now(timezone.utc)
+    final_filename = f"build_{now.strftime('%Y%m%d_%H%M%S')}.mp4"
+    final_path = output_dir / final_filename
+
+    scene_data = [{
+        "video_prompt": video_prompt,
+        "sfx_prompt": sfx_prompt,
+        "text_overlay": winner.get("one_line_concept", ""),
+    }]
+
+    logger.info("Composing final video...")
+    compose_final_video(
+        video_paths=[str(clip_path)],
+        sfx_results=[sfx_result],
+        scenes=scene_data,
+        output_path=final_path,
+    )
+    logger.info("Final video saved: %s", final_path)
+
+    # ── Save JSON output alongside ───────────────────────
+    _save_run_output(winner, prompts)
+
+    logger.info("=== GENERATION COMPLETE ===")
+    logger.info("Output: %s", final_path)
 
 
 def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
