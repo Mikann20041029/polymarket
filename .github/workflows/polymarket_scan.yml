@@ -1,17 +1,8 @@
-name: generate-construction-timelapse-prompts
+name: generate-kling-prompts
 
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: "Run mode"
-        required: false
-        default: "template"
-        type: choice
-        options:
-          - template
-          - offline
-          - dry-run
       template_type:
         description: "Force specific template (leave empty for random lottery)"
         required: false
@@ -30,7 +21,7 @@ on:
 jobs:
   generate-prompts:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
 
@@ -43,26 +34,17 @@ jobs:
           cache: "pip"
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        run: pip install pyyaml
 
       - name: Generate Kling 3.0 prompts
-        timeout-minutes: 5
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        timeout-minutes: 2
         run: |
-          MODE="${{ github.event.inputs.mode || 'template' }}"
           TEMPLATE="${{ github.event.inputs.template_type }}"
 
-          if [ "$MODE" = "template" ]; then
-            if [ -n "$TEMPLATE" ]; then
-              python build_pipeline.py --force-template "$TEMPLATE" --verbose
-            else
-              python build_pipeline.py --template --verbose
-            fi
-          elif [ "$MODE" = "offline" ]; then
-            python build_pipeline.py --offline --verbose
+          if [ -n "$TEMPLATE" ]; then
+            python build_pipeline.py --force-template "$TEMPLATE" --verbose
           else
-            python build_pipeline.py --dry-run --verbose
+            python build_pipeline.py --verbose
           fi
 
       - name: Upload prompt output

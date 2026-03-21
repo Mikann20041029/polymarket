@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
 """
-Construction Timelapse Luxury Transformation Video Pipeline.
+Construction Timelapse Luxury Transformation — Kling 3.0 Prompt Generator.
 
 rebornspacestv-style: construction process + luxury reveal shorts.
 
-3-STAGE VIDEO ARCHITECTURE:
-  Stage 1 (5s): Before state + first construction activity
-  Stage 2 (5s): Main construction — workers, machinery, dust, shadows
-  Stage 3 (5s): Finishing touches + luxury reveal with lighting shift
+5-STAGE TEMPLATE ARCHITECTURE (Kling 3.0 manual workflow):
+  5 clips × 5 seconds each = 25 seconds total
+  Each clip = 1 copy-paste prompt for Kling 3.0
 
-Each stage = 1 AI-generated clip. Stitched together for 15s total.
+No API calls needed. Generates text prompts only.
+You generate the videos manually in Kling 3.0, then stitch in CapCut/DaVinci.
 
 Usage:
-    # Full dry-run with hardcoded examples (no API needed)
-    python build_pipeline.py --offline
+    # Random template lottery (default)
+    python build_pipeline.py
+
+    # Force a specific template
+    python build_pipeline.py --force-template pool_vehicle
 
     # Dry-run with LLM candidate generation (DeepSeek only, ~$0.003)
     python build_pipeline.py --dry-run
 
-    # Generate video (requires approval + all API keys)
-    python build_pipeline.py --generate
+    # Fully offline test with hardcoded examples
+    python build_pipeline.py --offline
 """
 import argparse
 import json
@@ -95,7 +98,8 @@ def run_template(config: dict, force_template: str | None = None) -> None:
     print(f"  Template:  {result['template_name']}")
     print(f"  Reference: {result['reference_video']}")
     print(f"  Structure: 5 clips × 5 seconds = 25 seconds total")
-    print(f"  Mode:      Kling 3.0 Standard (10 credits × 5 = 50 credits)")
+    print(f"  Cost:      50 credits (Standard) / 175 credits (Professional)")
+    print(f"  Pro plan:  60 videos/month (Standard) / 17 videos/month (Professional)")
     print()
 
     print("  Variables:")
@@ -108,16 +112,31 @@ def run_template(config: dict, force_template: str | None = None) -> None:
     print("  COPY-PASTE PROMPTS FOR KLING 3.0")
     print("  Generate each as 5-second clip, then stitch in CapCut/DaVinci")
     print("=" * 70)
+
+    neg_prompt = (
+        "blurry, low quality, distorted faces, extra fingers, mutation, "
+        "deformed, ugly, watermark, text overlay, logo, out of frame, "
+        "bad anatomy, bad proportions, duplicate, glitch, noise"
+    )
+
     for stage in result["stages"]:
         num = stage["stage"]
         name = stage["name"].upper()
         prompt = stage["video_prompt"]
         print(f"\n{'─' * 70}")
         print(f"  CLIP {num}/5: {name}")
-        print(f"  Duration: 5 seconds | Aspect: 9:16 vertical")
+        print(f"  Duration: 5 seconds | Aspect: 9:16 vertical | Mode: Standard")
         print(f"{'─' * 70}")
-        print(f"\n{prompt}\n")
+        print(f"\n[Prompt]\n{prompt}\n")
+        print(f"[Negative Prompt]\n{neg_prompt}\n")
     print("=" * 70)
+
+    # Credit summary
+    print(f"\n  CREDIT SUMMARY:")
+    print(f"  Standard mode:      5 clips × 10 credits = 50 credits")
+    print(f"  Professional mode:  5 clips × 35 credits = 175 credits")
+    print(f"  Tip: Generate in Standard first, re-generate best clips in Professional")
+    print()
 
     # Save output
     _save_template_output(result)
@@ -275,177 +294,6 @@ def run_dry(config: dict) -> None:
     logger.info("Estimated cost: ~$0.003 (DeepSeek LLM calls only)")
 
 
-def run_generate(config: dict) -> None:
-    """Full generation: scenario → 3 video clips → 3 SFX → compose final video."""
-    from scenario.generator import generate_candidates
-    from scenario.similarity import filter_candidates
-    from scenario.scorer import score_candidates_llm, filter_by_score
-    from scenario.balancer import (
-        load_category_stats, adjust_scores, update_stats_after_selection, save_category_stats,
-    )
-    from scenario.selector import load_history, select_best, record_selection
-    from prompts.video_prompt_builder import build_video_prompt
-    from videogen.wan import generate_clip, check_fal_balance
-    from sfx.elevenlabs_sfx import generate_sfx
-    from postprocess.effects import compose_final_video
-
-    logger = logging.getLogger("build")
-    client = create_llm_client(config)
-
-    history = load_history(HISTORY_PATH)
-    stats = load_category_stats(CATEGORY_STATS_PATH)
-
-    logger.info("=== FULL GENERATION MODE (3-stage architecture) ===")
-    logger.info("History: %d past builds", len(history))
-
-    # ── Stage 1: Scenario selection (same as dry-run) ────
-    candidates = generate_candidates(client, config, history, stats)
-    logger.info("Candidates generated: %d", len(candidates))
-
-    if not candidates:
-        logger.error("No candidates generated. Check API key and connectivity.")
-        sys.exit(1)
-
-    passed = filter_candidates(candidates, history, config)
-    logger.info("After similarity filter: %d/%d", len(passed), len(candidates))
-
-    passed = score_candidates_llm(passed, client, config)
-    passed = filter_by_score(passed, config)
-    logger.info("After score filter: %d", len(passed))
-
-    categories_config = config.get("categories", {})
-    passed = adjust_scores(passed, stats, categories_config)
-
-    winner = select_best(passed)
-    if not winner:
-        logger.error("No candidates survived filtering. Adjust config thresholds.")
-        sys.exit(1)
-
-    history = record_selection(winner, history, HISTORY_PATH)
-    stats = update_stats_after_selection(winner, stats, categories_config)
-    save_category_stats(stats, CATEGORY_STATS_PATH)
-
-    # ── Stage 2: Generate 3-stage video prompts via LLM ──
-    prompts = build_video_prompt(winner, client, config)
-    _print_results(winner, prompts, config)
-
-    stages = prompts.get("stages", [])
-    if not stages:
-        # Legacy fallback: single prompt
-        stages = [{
-            "stage": 1,
-            "name": "full",
-            "video_prompt": prompts.get("video_prompt", ""),
-            "sfx_prompt": prompts.get("sfx_prompt", ""),
-            "duration_seconds": 15,
-        }]
-
-    # ── Stage 3: Pre-validate APIs before spending money ──
-    num_clips = len(stages)
-    if not check_fal_balance(num_clips):
-        logger.error("Insufficient fal.ai balance for %d clips. Top up and retry.", num_clips)
-        sys.exit(1)
-
-    # Pre-check ElevenLabs auth so we know before generating video
-    from sfx.elevenlabs_sfx import check_elevenlabs_auth
-    sfx_available = check_elevenlabs_auth()
-    if not sfx_available:
-        logger.warning("ElevenLabs unavailable — video will use silent audio")
-
-    # ── Stage 4: Generate video clips (one per stage) ────
-    output_dir = BASE_DIR / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    temp_dir = output_dir / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-
-    clip_paths = []
-    sfx_results = []
-    scene_data = []
-
-    total_stages = len(stages)
-    for stage in stages:
-        stage_num = stage["stage"]
-        stage_name = stage["name"]
-        video_prompt = stage["video_prompt"]
-        sfx_prompt = stage["sfx_prompt"]
-        duration = stage.get("duration_seconds", 5)
-
-        if not video_prompt:
-            logger.error("Empty video prompt for stage %d (%s)", stage_num, stage_name)
-            sys.exit(1)
-
-        # Generate video clip
-        clip_path = temp_dir / f"clip_{stage_num:02d}_{stage_name}.mp4"
-        logger.info("Generating clip %d/%d (%s)...", stage_num, total_stages, stage_name)
-        try:
-            generate_clip(video_prompt, clip_path)
-        except Exception as e:
-            logger.error("Clip %d/%d FAILED: %s", stage_num, total_stages, e)
-            logger.error("Video generation aborted at stage %d. %d clips were generated before failure.",
-                         stage_num, len(clip_paths))
-            sys.exit(1)
-        clip_paths.append(str(clip_path))
-        logger.info("Clip %d saved: %s", stage_num, clip_path)
-
-        # Generate SFX (non-fatal — falls back to silence)
-        sfx_path = temp_dir / f"sfx_{stage_num:02d}_{stage_name}.mp3"
-        logger.info("Generating SFX %d/%d (%s)...", stage_num, total_stages, stage_name)
-        sfx_result = generate_sfx(
-            prompt=sfx_prompt,
-            output_path=sfx_path,
-            duration=duration,
-        )
-        sfx_results.append(sfx_result)
-        if sfx_result.get("fallback"):
-            logger.warning("SFX %d using silent fallback", stage_num)
-        else:
-            logger.info("SFX %d saved: %s", stage_num, sfx_result["audio_path"])
-
-        scene_data.append({
-            "video_prompt": video_prompt,
-            "sfx_prompt": sfx_prompt,
-            "text_overlay": "",
-        })
-
-    # ── Stage 5: Compose final video (3 clips → 1) ──────
-    now = datetime.now(timezone.utc)
-    final_filename = f"build_{now.strftime('%Y%m%d_%H%M%S')}.mp4"
-    final_path = output_dir / final_filename
-
-    logger.info("Composing final video from %d clips...", len(clip_paths))
-    compose_final_video(
-        video_paths=clip_paths,
-        sfx_results=sfx_results,
-        scenes=scene_data,
-        output_path=final_path,
-    )
-    logger.info("Final video saved: %s", final_path)
-
-    # ── Stage 6: Upload to YouTube ───────────────────────
-    import os
-    if os.getenv("YOUTUBE_REFRESH_TOKEN"):
-        from upload.youtube import upload_to_youtube
-        logger.info("Uploading to YouTube Shorts...")
-        try:
-            yt_result = upload_to_youtube(
-                video_path=str(final_path),
-                scenario=winner,
-                privacy="public",
-            )
-            logger.info("YouTube upload complete: %s", yt_result.get("url", ""))
-        except Exception as e:
-            logger.error("YouTube upload failed: %s", e)
-            logger.info("Video saved locally — upload manually if needed.")
-    else:
-        logger.info("YOUTUBE_REFRESH_TOKEN not set — skipping YouTube upload.")
-        logger.info("Run setup_youtube_auth.py to enable auto-upload.")
-
-    # ── Save JSON output alongside ───────────────────────
-    _save_run_output(winner, prompts)
-
-    logger.info("=== GENERATION COMPLETE ===")
-    logger.info("Output: %s", final_path)
-
 
 def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
     """Print formatted results to stdout."""
@@ -574,19 +422,22 @@ def _save_run_output(scenario: dict, prompts: dict) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Construction Timelapse Luxury Transformation Pipeline (3-stage)",
+        description="Kling 3.0 Prompt Generator — Construction Timelapse Luxury Transformation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Modes:
-  --template   Template lottery. Picks 1 of 5 reference templates, fills variables. No API.
-  --offline    Fully offline. No API calls. Uses hardcoded examples.
+Modes (default: template lottery):
+  (default)    Template lottery. Picks 1 of 5 templates, fills variables. No API. No cost.
   --dry-run    LLM-only mode. Generates real candidates via DeepSeek (~$0.003).
-  --generate   Full video generation. 3 clips + 3 SFX + compositing.
+  --offline    Fully offline. No API calls. Uses hardcoded examples.
+
+Kling 3.0 workflow:
+  1. Run this script to generate 5 copy-paste prompts
+  2. Paste each prompt into Kling 3.0 (5s, 9:16 vertical, Standard mode)
+  3. Stitch 5 clips together in CapCut/DaVinci Resolve
+
+Cost: 50 credits/video (Standard) or 175 credits/video (Professional)
+Pro plan ($37/month, 3000 credits): ~60 videos/month (Standard)
         """,
-    )
-    parser.add_argument(
-        "--template", action="store_true",
-        help="Template lottery mode: pick 1 of 5 reference templates, fill variables (no API)",
     )
     parser.add_argument(
         "--force-template", type=str, default=None,
@@ -595,15 +446,11 @@ Modes:
     )
     parser.add_argument(
         "--offline", action="store_true",
-        help="Fully offline test (no API calls at all)",
+        help="Fully offline test with hardcoded examples (no API calls)",
     )
     parser.add_argument(
-        "--dry-run", action="store_true", default=True,
-        help="LLM candidate generation only, no video/audio (default)",
-    )
-    parser.add_argument(
-        "--generate", action="store_true",
-        help="Full video generation (requires approval)",
+        "--dry-run", action="store_true",
+        help="LLM candidate generation via DeepSeek (~$0.003)",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",
@@ -625,14 +472,12 @@ Modes:
     with open(config_path) as f:
         config = yaml.safe_load(f)
 
-    if args.generate:
-        run_generate(config)
-    elif args.template or args.force_template:
-        run_template(config, force_template=args.force_template)
+    if args.dry_run:
+        run_dry(config)
     elif args.offline:
         run_offline(config)
     else:
-        run_dry(config)
+        run_template(config, force_template=args.force_template)
 
 
 if __name__ == "__main__":
