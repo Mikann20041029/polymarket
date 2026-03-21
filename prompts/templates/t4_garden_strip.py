@@ -1,23 +1,18 @@
 """
-Template 4: Garden Strip Transformation (ref: Luxury Flooring / 04)
+Template 4: Garden Strip Transformation — 5×5s Kling 3.0 prompts
 
-STRUCTURE (LOCKED):
-  Stage 1: Worker digs up sod along house wall (low ground angle, forced perspective)
-  Stage 2: Weed barrier + soil added (same low angle)
-  Stage 3: Hard cut to BLACK (time skip representing weeks/months of growth)
-  Stage 4: REVEAL — full bloom / completed garden in 3-frame crescendo, increasingly close
+REFERENCE: Luxury Flooring (flower garden)
+STRUCTURE: 5 clips × 5 seconds each = 25 seconds total
 
-KEY INSIGHT: This template has the SIMPLEST structure but maximum emotional payoff.
-  The same fixed camera angle throughout creates instant before/after comparison.
-  The black frame is the structural hinge — it compresses time and creates anticipation.
+Clip 1 (0-5s):   Worker digs up sod along house wall (low forced perspective)
+Clip 2 (5-10s):  Weed barrier + soil poured into trench
+Clip 3 (10-15s): Time-lapse of seedlings sprouting and growing
+Clip 4 (15-20s): Full bloom approaching — buds opening, color explosion building
+Clip 5 (20-25s): Final spectacular reveal — full bloom garden in warm light
 
-VARIABLES:
-  - What is GROWN (flowers, vegetables, herbs, succulents, vines)
-  - The HOUSE EXTERIOR (siding type, color)
-  - The soil/growing medium TYPE
-  - The weed barrier METHOD
-  - The color palette of the final garden
-  - The worker appearance
+NOTE: Original was 11 seconds with a hard-cut black screen.
+      For 25s, we expand the growth sequence into 3 clips (3-4-5)
+      which creates a more satisfying progressive reveal.
 """
 from prompts.templates.base import BaseTemplate
 
@@ -26,12 +21,11 @@ class GardenStripTemplate(BaseTemplate):
     template_id = "garden_strip"
     template_name = "Garden Strip Transformation"
     reference_video = "04_luxury_flooring.mp4"
-    total_duration_seconds = 11.0
-    num_stages = 4
+    total_duration_seconds = 25.0
+    num_stages = 5
 
     def get_variable_pools(self) -> dict[str, list]:
         return {
-            # ── House exterior ──
             "house_siding": [
                 "gray horizontal vinyl lap siding",
                 "white painted clapboard siding",
@@ -40,13 +34,12 @@ class GardenStripTemplate(BaseTemplate):
                 "cream stucco wall",
                 "natural stone wall with mortar joints",
                 "weathered barn wood siding",
-                "sage green horizontal board-and-batten",
+                "sage green board-and-batten",
             ],
             "foundation_type": [
                 "concrete foundation strip", "exposed stone foundation",
                 "painted gray block foundation", "brick foundation course",
             ],
-            # ── Setting ──
             "lawn_type": [
                 "green lawn", "patchy brown-green lawn",
                 "clover-mixed lawn", "dry summer grass",
@@ -57,78 +50,59 @@ class GardenStripTemplate(BaseTemplate):
                 "chain-link fence with dense hedge behind",
                 "stone wall with climbing ivy and blue sky",
                 "cedar privacy fence with maple trees beyond",
-                "wrought-iron fence with distant hills visible",
             ],
             "weather": [
                 "overcast diffused daylight, neutral color temperature",
                 "bright sunny day with sharp shadows",
                 "soft golden afternoon light",
                 "hazy warm summer light",
-                "crisp autumn daylight with scattered clouds",
             ],
-            # ── Worker ──
             "worker_top": [
                 "bright red polo shirt", "navy blue work t-shirt",
                 "olive green henley", "white linen button-up",
-                "yellow safety vest over gray shirt", "coral tank top",
-                "flannel plaid shirt", "black long-sleeve athletic shirt",
+                "flannel plaid shirt", "black athletic shirt",
             ],
             "worker_pants": [
                 "black work pants", "faded blue jeans",
                 "khaki cargo pants", "dark green garden pants",
-                "brown canvas work pants",
             ],
-            "worker_gloves": [
-                "black work gloves", "green garden gloves",
-                "tan leather gloves", "orange rubber gloves",
-            ],
-            # ── Digging ──
             "dig_tool": [
                 "flat-blade spade", "pointed garden shovel",
-                "broad hoe", "mattock pick",
-                "garden fork",
+                "broad hoe", "garden fork",
             ],
             "soil_type": [
                 "dark rich black compost", "brown loamy garden soil",
-                "red clay-rich soil", "sandy light-brown soil",
-                "dark peat-based potting mix",
+                "red clay-rich soil", "dark peat-based potting mix",
             ],
             "barrier_method": [
                 "cardboard egg cartons as biodegradable weed barrier",
                 "sheets of corrugated cardboard as weed suppression",
                 "thick layer of newspaper as biodegradable mulch",
                 "coconut coir fiber mats as planting medium",
-                "burlap sacking as biodegradable ground cover",
             ],
-            # ── What grows ──
             "plant_type": [
                 "mixed cottage flowers",
                 "vegetable garden",
                 "herb garden",
-                "succulent and cactus garden",
                 "native wildflower meadow strip",
-                "tropical foliage",
                 "climbing vine wall",
-                "ornamental grass garden",
             ],
             "bloom_palette": [
                 "bright orange zinnias, white shasta daisies, pink cosmos, purple petunias, yellow marigolds, and magenta blooms — full rainbow spectrum",
                 "deep red roses, pale pink peonies, white hydrangeas, and lavender spikes — romantic pastel palette",
                 "bright yellow sunflowers, orange rudbeckia, red dahlias, and golden coreopsis — warm sunset tones",
                 "blue delphiniums, purple salvia, white sweet alyssum, and pink foxglove — cool cottage tones",
-                "lime green lettuces, purple cabbages, red tomatoes on stakes, yellow squash flowers, and emerald basil — edible rainbow",
-                "rosemary bushes, purple lavender, mint patches, golden oregano, and sage gray-green — Mediterranean herbs",
-                "jade green echeveria rosettes, purple aeonium, pink sedum, golden barrel cactus, and pale blue senecio — desert jewels",
-                "tall pink muhly grass plumes, silver miscanthus, amber sedge, and green fountain grass — waving texture",
+                "lime green lettuces, purple cabbages, red tomatoes, yellow squash flowers, and emerald basil — edible rainbow",
+                "rosemary bushes, purple lavender, mint patches, golden oregano, and sage — Mediterranean herbs",
             ],
             "bloom_height": [
-                "medium height, 6-12 inches, dense and full",
-                "tall, 12-24 inches, reaching upward",
-                "low and spreading, 3-6 inches, carpet-like",
+                "medium height 6-12 inches, dense and full",
+                "tall 12-24 inches, reaching upward",
+                "low and spreading 3-6 inches, carpet-like",
                 "mixed heights, layered from front to back",
             ],
             "reveal_lighting": [
-                "warmer golden afternoon light than during construction",
+                "warmer golden afternoon light",
                 "soft morning light with dew visible on petals",
                 "bright overhead midday sun with vivid saturated colors",
                 "warm sunset sidelight creating long petal shadows",
@@ -136,99 +110,105 @@ class GardenStripTemplate(BaseTemplate):
         }
 
     def build_stages(self, v: dict[str, str]) -> list[dict]:
-        camera = (
-            "Low angle, nearly ground level, 1-2 feet off the ground, 9:16 vertical portrait. "
-            "Positioned at one end of the strip along the house wall, looking lengthwise down the strip. "
-            "Strong one-point perspective — the horizontal siding lines converge to a vanishing point. "
-            "Camera position is IDENTICAL across all stages for instant before/after comparison."
+        cam = (
+            "Low angle nearly ground level, 1-2 feet off ground, 9:16 vertical portrait. "
+            "Positioned at one end of the strip along the house wall, looking lengthwise. "
+            "Strong one-point perspective — horizontal siding lines converge to vanishing point."
         )
 
         return [
-            # ── STAGE 1: Dig + prep (0-4s) ──
             {
                 "stage": 1,
-                "name": "dig_and_prep",
-                "duration_seconds": 4.0,
-                "camera": camera,
+                "name": "dig",
+                "duration_seconds": 5.0,
+                "camera": cam,
                 "video_prompt": (
-                    f"{camera} A {v['house_siding']} wall dominates the right side with strong converging "
-                    f"horizontal lines. {v['foundation_type']} visible at the base. {v['lawn_type']} extends "
-                    f"to the left. {v['background']}. {v['weather']}. "
-                    f"A worker in {v['worker_top']}, {v['worker_pants']}, and {v['worker_gloves']} is bent "
-                    f"forward using a {v['dig_tool']} to dig up a strip of grass along the foundation. "
-                    f"A large clump of grass and soil lifts toward the camera in dramatic forced perspective. "
-                    f"A narrow trench 12-18 inches wide is exposed, showing bare brown soil. "
-                    f"The worker crouches and lays {v['barrier_method']} into the trench, pressing down "
-                    f"with both hands. Gray-beige barrier material visible in the trench."
+                    f"{cam} A {v['house_siding']} wall dominates the right side with converging "
+                    f"horizontal lines. {v['foundation_type']} at the base. {v['lawn_type']} on the left. "
+                    f"{v['background']}. {v['weather']}. A worker in {v['worker_top']} and "
+                    f"{v['worker_pants']} uses a {v['dig_tool']} to dig up a strip of grass along "
+                    f"the foundation. A large clump of grass and soil lifts toward the camera in "
+                    f"dramatic forced perspective. A narrow trench 12-18 inches wide exposed, "
+                    f"bare brown soil visible. The worker crouches and lays {v['barrier_method']} "
+                    f"into the trench, pressing down with both hands."
                 ),
                 "sfx_prompt": (
-                    "shovel slicing through sod with earthy thud, grass roots tearing, "
-                    "soil falling, birds singing, gentle outdoor breeze, hands patting down material"
+                    "shovel slicing through sod, grass roots tearing, soil falling, birds singing"
                 ),
             },
-            # ── STAGE 2: Soil addition (4-7s) ──
             {
                 "stage": 2,
-                "name": "soil_and_bed",
-                "duration_seconds": 3.0,
-                "camera": camera,
+                "name": "soil",
+                "duration_seconds": 5.0,
+                "camera": cam,
                 "video_prompt": (
-                    f"{camera} Same low angle along the house wall. The worker in {v['worker_top']} "
-                    f"stands bent forward, pouring {v['soil_type']} from a large dark plastic bag "
-                    f"onto the prepared trench. The dark soil creates a dramatic contrast band between "
-                    f"the {v['lawn_type']} and the {v['house_siding']}. "
-                    f"The worker walks away toward the vanishing point, spreading soil evenly. "
-                    f"Then the worker exits frame. A static shot of the completed dark soil bed — "
-                    f"a neat, defined strip of {v['soil_type']} running the full visible length of the "
-                    f"house wall. The strip is empty, dark, and ready. "
-                    f"The geometric composition is clean: green grass, dark soil strip, "
-                    f"{v['house_siding']}, {v['background']}."
+                    f"{cam} Same low angle along the {v['house_siding']} wall. The worker in "
+                    f"{v['worker_top']} pours {v['soil_type']} from a large dark plastic bag onto "
+                    f"the prepared trench. Dark soil creates a dramatic contrast band between the "
+                    f"{v['lawn_type']} and the {v['house_siding']}. The worker walks toward the "
+                    f"vanishing point, spreading soil evenly. Then exits frame. "
+                    f"Static shot of the completed dark soil bed — a neat defined strip of "
+                    f"{v['soil_type']} running the full length of the wall. The strip is empty, dark, "
+                    f"ready. Clean composition: green grass, dark soil strip, {v['house_siding']}."
                 ),
                 "sfx_prompt": (
-                    "soil pouring from bag with dry rustling cascade, footsteps on grass, "
-                    "birds singing, wind in leaves, then quiet stillness as worker leaves"
+                    "soil pouring from bag with rustling cascade, footsteps on grass, wind in leaves"
                 ),
             },
-            # ── STAGE 3: BLACK SCREEN time skip (7-8s) ──
             {
                 "stage": 3,
-                "name": "time_skip_black",
-                "duration_seconds": 1.0,
-                "camera": "Complete black screen. No camera. This is a hard cut to black.",
+                "name": "sprouting",
+                "duration_seconds": 5.0,
+                "camera": cam,
                 "video_prompt": (
-                    "Complete black screen. Total darkness. No image content. "
-                    "This is a hard cut representing weeks or months of growth passing. "
-                    "The black frame separates the construction phase from the reveal phase. "
-                    "It acts as a palate cleanser that makes the following color explosion more dramatic."
+                    f"{cam} Same low angle. TIME-LAPSE of weeks passing. The dark {v['soil_type']} "
+                    f"strip begins to change. Tiny green seedling shoots push up through the soil — "
+                    f"first a few scattered points of green, then more and more. Light shifts from "
+                    f"overcast to sunny to overcast as days pass. The seedlings grow taller, developing "
+                    f"first true leaves. By end of clip the strip has transformed from bare soil to "
+                    f"a dense carpet of green foliage 3-4 inches tall. No flowers yet — just lush "
+                    f"green growth. The contrast with the {v['house_siding']} is already striking."
                 ),
                 "sfx_prompt": (
-                    "all sound cuts to silence for half a second, then a subtle rising "
-                    "magical shimmer tone builds anticipation for the reveal"
+                    "time-lapse ambience — shifting wind, day-night cycles, gentle nature sounds"
                 ),
             },
-            # ── STAGE 4: REVEAL — full bloom crescendo (8-11s) ──
             {
                 "stage": 4,
-                "name": "bloom_reveal",
-                "duration_seconds": 3.0,
-                "camera": camera,
+                "name": "budding",
+                "duration_seconds": 5.0,
+                "camera": cam,
                 "video_prompt": (
-                    f"{camera} Same low ground-level angle along the house wall — IDENTICAL position "
-                    f"to all previous stages. {v['reveal_lighting']}. "
-                    f"DRAMATIC TRANSFORMATION: the dark soil strip is now filled with a dense, "
-                    f"spectacular garden of {v['bloom_palette']}. "
-                    f"The plants are {v['bloom_height']}. The {v['house_siding']} acts as a neutral "
-                    f"gallery wall making the colors pop intensely. "
-                    f"The camera holds this angle, then pushes very slightly forward — the flowers "
-                    f"fill more of the frame. The color density increases as the camera moves deeper "
-                    f"into the garden corridor. Some petals are nearly at macro distance from the lens. "
-                    f"No worker visible. The {v['foundation_type']} is now completely concealed by "
-                    f"overflowing foliage. Individual petal textures catch warm backlighting. "
-                    f"The transformation from dark soil to this explosion of color is the entire payoff."
+                    f"{cam} Same low angle. TIME-LAPSE continues. The green foliage strip grows "
+                    f"taller and denser — now {v['bloom_height']}. Flower buds form and begin to open. "
+                    f"The first spots of color appear: hints of the {v['bloom_palette']}. "
+                    f"More buds open rapidly in time-lapse — color spreads across the strip like "
+                    f"paint being splashed. The transition from green to multicolored accelerates. "
+                    f"By end of clip, 60-70 percent of buds have opened. The garden is becoming "
+                    f"spectacular but hasn't reached peak bloom yet. Building anticipation."
                 ),
                 "sfx_prompt": (
-                    "gentle orchestral swell or warm ambient pad, soft breeze rustling through "
-                    "flower petals, honeybees buzzing faintly, birdsong, peaceful summer garden"
+                    "gentle orchestral swell building, soft breeze, bees buzzing faintly"
+                ),
+            },
+            {
+                "stage": 5,
+                "name": "full_bloom_reveal",
+                "duration_seconds": 5.0,
+                "camera": cam,
+                "video_prompt": (
+                    f"{cam} Same low angle — IDENTICAL position to all previous clips. "
+                    f"{v['reveal_lighting']}. SPECTACULAR FULL BLOOM: the strip is packed dense with "
+                    f"{v['bloom_palette']}. Every inch is overflowing with color and life. "
+                    f"The {v['house_siding']} acts as a neutral gallery wall making colors pop intensely. "
+                    f"Camera pushes very slightly forward — flowers fill more of the frame. "
+                    f"Individual petal textures catch warm backlighting. Some petals nearly at macro "
+                    f"distance from lens. The {v['foundation_type']} completely concealed by overflowing "
+                    f"foliage. Butterflies and bees visible. The transformation from dark soil to "
+                    f"this explosion of color is the entire emotional payoff. No worker visible."
+                ),
+                "sfx_prompt": (
+                    "warm ambient pad, soft breeze through petals, honeybees buzzing, birdsong"
                 ),
             },
         ]

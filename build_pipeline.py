@@ -73,55 +73,58 @@ def create_llm_client(config: dict):
 
 
 def run_template(config: dict, force_template: str | None = None) -> None:
-    """Template-based generation. Picks 1 of 5 reference templates, fills variables.
+    """Template-based prompt generation for Kling 3.0.
 
-    NO API calls needed. Pure deterministic template + random variables.
-    Produces multi-stage prompts that faithfully reproduce reference video structure.
+    NO API calls needed. Picks 1 of 5 templates, fills variables,
+    outputs 5 copy-paste-ready prompts for manual Kling 3.0 generation.
     """
     from prompts.templates.lottery import TemplateLottery, print_lottery_info
 
     logger = logging.getLogger("build")
 
-    logger.info("=== TEMPLATE LOTTERY MODE (no API needed) ===")
+    logger.info("=== TEMPLATE LOTTERY → Kling 3.0 Prompts ===")
     print_lottery_info()
 
     lottery = TemplateLottery()
     result = lottery.draw(force_template=force_template)
 
-    # Print results
+    # Print header
     print("\n" + "=" * 70)
-    print("  TEMPLATE LOTTERY RESULT")
+    print("  KLING 3.0 PROMPT SET")
     print("=" * 70)
     print(f"  Template:  {result['template_name']}")
     print(f"  Reference: {result['reference_video']}")
-    print(f"  Duration:  {result['total_duration_seconds']}s")
-    print(f"  Stages:    {result['num_stages']}")
+    print(f"  Structure: 5 clips × 5 seconds = 25 seconds total")
+    print(f"  Mode:      Kling 3.0 Standard (10 credits × 5 = 50 credits)")
     print()
 
-    print("  RESOLVED VARIABLES:")
+    print("  Variables:")
     for k, val in result["variables"].items():
-        print(f"    {k:30s} = {val}")
+        print(f"    {k}: {val}")
     print()
 
-    print("-" * 70)
-    print("  STAGE PROMPTS")
-    print("-" * 70)
+    # Print prompts in copy-paste format for Kling 3.0
+    print("=" * 70)
+    print("  COPY-PASTE PROMPTS FOR KLING 3.0")
+    print("  Generate each as 5-second clip, then stitch in CapCut/DaVinci")
+    print("=" * 70)
     for stage in result["stages"]:
+        num = stage["stage"]
         name = stage["name"].upper()
-        dur = stage["duration_seconds"]
-        wc = len(stage["video_prompt"].split())
-        print(f"\n  [{name}] ({dur}s, {wc} words)")
-        print(f"    Camera: {stage.get('camera', 'see prompt')[:100]}...")
-        print(f"    Video:  {stage['video_prompt']}")
-        print(f"    SFX:    {stage['sfx_prompt']}")
-    print()
+        prompt = stage["video_prompt"]
+        print(f"\n{'─' * 70}")
+        print(f"  CLIP {num}/5: {name}")
+        print(f"  Duration: 5 seconds | Aspect: 9:16 vertical")
+        print(f"{'─' * 70}")
+        print(f"\n{prompt}\n")
+    print("=" * 70)
 
     # Save output
     _save_template_output(result)
 
-    logger.info("=== TEMPLATE LOTTERY COMPLETE ===")
-    logger.info("No money spent. No API calls made.")
-    logger.info("Run with --generate --template to produce actual video.")
+    logger.info("=== DONE — Copy prompts above into Kling 3.0 ===")
+    logger.info("Cost: 50 credits per video (Standard mode)")
+    logger.info("Pro plan (3000 credits): up to 60 videos/month")
 
 
 def _save_template_output(result: dict) -> None:
