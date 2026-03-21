@@ -1,108 +1,159 @@
 """
-Two-stage construction timelapse scenario generator.
+Two-stage construction scenario generator with deep rebornspacestv visual DNA.
 
-Stage 1: Select concept templates + camera styles
-Stage 2: LLM generates concrete build scenarios per template
+Stage 1: Select concept templates + camera styles (deterministic)
+Stage 2: LLM generates vivid, specific build scenarios per template
 
-Generation order:
-  1. Concept template is fixed (what makes people click)
-  2. Construction process is designed (what's satisfying to watch)
-  3. Before/after spaces are defined
-  4. 15-second timelapse timeline is structured
+The LLM prompt is heavily engineered to produce scenarios that:
+- Have VISUAL SPECIFICITY (not generic descriptions)
+- Have NARRATIVE COHERENCE (before → process → reveal flows logically)
+- Are MAXIMALLY DIVERSE (no two scenarios feel similar)
+- Are BUILDABLE but ASPIRATIONAL (not fantasy, not boring)
 """
 import json
 import logging
 import random
 
+from prompts.style_guide import CONTENT_PILLARS, ANTI_PATTERNS
+
 logger = logging.getLogger(__name__)
 
-CANDIDATE_SYSTEM_PROMPT = """You are a creative director for a viral construction timelapse YouTube Shorts channel.
-You create concepts for "luxury space transformation" videos in the style of rebornspacestv.
+# ── SYSTEM PROMPT ────────────────────────────────────────────────
+# This is the DNA of the entire channel baked into one prompt.
 
-WHAT THESE VIDEOS ARE:
-- 15-second construction timelapse showing a space being built/transformed
-- Workers, heavy machinery, tools, materials are ALL visible
-- High-speed time-lapse of real construction: digging, framing, pouring, tiling, finishing
-- Ends with a luxury/hidden/amazing completed space
-- "Could this really exist?" feeling - not pure fantasy, but aspirational
+CANDIDATE_SYSTEM_PROMPT = """You are the creative mastermind behind a viral construction transformation YouTube Shorts channel.
+Your videos get millions of views because you understand ONE thing better than anyone:
+People cannot stop watching when they see an UGLY/BORING space become LUXURY through VISIBLE construction.
 
-WHAT THESE VIDEOS ARE NOT:
-- NOT disasters, accidents, or shock footage
-- NOT magic/instant transformations (the BUILD PROCESS is the content)
-- NOT just before/after photos
-- NOT pure fantasy or sci-fi
+YOUR CHANNEL'S VISUAL IDENTITY (rebornspacestv style):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. FIXED CAMERA: One camera angle, never moves. The transformation happens IN FRONT of you.
+2. REAL CONSTRUCTION: Workers in vests, excavators, concrete trucks, welding sparks, dust clouds.
+   The BUILD PROCESS is the content — not magic, not instant transformation.
+3. TIME COMPRESSION: Shadows sweep across the ground. Hours pass in seconds. Workers blur with speed.
+4. DRAMATIC REVEAL: At the end, lighting shifts (golden hour / interior lights turn on), and the
+   finished space is BREATHTAKING. Viewers want to LIVE there.
+5. SOUND DESIGN: Rhythmic construction sounds (hammering, drilling, pouring) → fade to atmospheric
+   reveal ambience (water, warm hum, silence).
 
-CONSTRUCTION PROCESS IS KEY:
-- Excavators digging, cranes lifting, trucks hauling
-- Workers framing, welding, pouring concrete, laying tile
-- Materials: wood, steel, glass, stone, concrete, soil
-- The satisfaction comes from WATCHING things get built fast
+WHAT YOUR VIDEOS ARE:
+- 15-second vertical clips (9:16)
+- Before: boring/ugly/empty space
+- Middle: intense construction timelapse with visible workers and machinery
+- After: luxury space that makes viewers say "I NEED this"
+- Camera: FIXED throughout. Same angle from start to finish.
 
-TIME STRUCTURE (15 seconds):
-  0-1s:   Before state clearly visible (boring/empty/ugly space)
-  1-4s:   Construction begins (demolition, excavation, first work)
-  4-10s:  Major build (structure, installation, big changes)
-  10-15s: Finishing touches + completed reveal (lights on, water fills, door opens)
+WHAT YOUR VIDEOS ARE NOT:
+- NOT magic transformations (the work must be visible)
+- NOT before/after slideshows (the PROCESS is the content)
+- NOT fantasy/sci-fi (must feel buildable even if ambitious)
+- NOT generic (each video has a UNIQUE, specific concept)
 
-TARGET: Global audience. Locations should feel international."""
+YOUR SECRET SAUCE — WHAT GOES VIRAL:
+1. "Wait... they're building WHAT?" — The concept must be surprising
+2. "Woah, look at that excavator!" — Heavy machinery is visually impressive
+3. "I want to live there" — The reveal must trigger desire
+4. "How is that possible?" — Aspirational but feels real
+5. "I have to show someone" — Shareability through uniqueness
 
-CANDIDATE_USER_PROMPT = """Generate exactly {count} construction timelapse scenario candidates.
+CONTENT PILLARS (rotate between these):
+""" + "\n".join(
+    f"• {p['name']}: {p['description']}"
+    for p in CONTENT_PILLARS
+) + """
 
-CONCEPT TEMPLATE FOR THIS BATCH:
+ANTI-PATTERNS (your videos NEVER do this):
+""" + "\n".join(f"✗ {ap}" for ap in ANTI_PATTERNS[:6])
+
+# ── USER PROMPT ──────────────────────────────────────────────────
+
+CANDIDATE_USER_PROMPT = """Generate exactly {count} construction transformation scenario candidates.
+
+CONCEPT DIRECTION FOR THIS BATCH:
 - Template: {template_label}
 - Core idea: {template_description}
 - Key process: {template_key_process}
 - Satisfaction driver: {template_satisfaction}
-- Camera style: {camera_label} - {camera_description}
+- Camera style: {camera_label} — {camera_description}
+
+CONTENT PILLAR TO DRAW FROM: {pillar_name}
+Pillar examples for INSPIRATION (do NOT copy these, invent NEW ones):
+{pillar_examples}
 
 CATEGORIES TO CONSIDER: {compatible_categories}
-CATEGORIES TO AVOID (overused): {avoid_categories}
+CATEGORIES TO AVOID (overused recently): {avoid_categories}
 
-Each candidate MUST:
-1. Have workers and/or machinery visible in the construction phase
-2. Have a one-line concept that makes someone NEED to watch
-3. Have a clear before → build process → after progression
-4. End with something luxurious/hidden/amazing
+PREVIOUS CONCEPTS (do NOT repeat or closely resemble):
+{recent_concepts}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Each candidate MUST have:
+1. A one_line_concept that makes someone STOP SCROLLING
+   Bad: "Building a pool in the backyard" (boring, generic)
+   Good: "Cutting a hole in the rooftop to install a glass-bottom pool with a living room view below"
+
+2. A visually SPECIFIC before_space — not "empty yard" but exact colors, textures, objects
+   Bad: "empty room" | Good: "cracked beige tile floor, water-stained drop ceiling, flickering fluorescent tube"
+
+3. A construction_process with 5 stages that feel VISUALLY SATISFYING in timelapse
+   Each stage must describe a VISIBLE action (what the viewer SEES), not abstract work
+
+4. An after_space with SPECIFIC luxury details — not "luxury room" but exact materials and atmosphere
+   Bad: "beautiful pool" | Good: "infinity-edge pool with dark basalt coping, turquoise water catching sunset"
+
+5. A time_structure describing what EXACTLY is visible at each time mark
 
 Return ONLY a JSON array of {count} objects:
 [
   {{
-    "one_line_concept": "<one sentence that makes you click, e.g. 'Burying a shipping container to build an underground cinema'>",
-    "category": "<one of: backyard_excavation, underground_container, hidden_under_pool, pool_conversion, garage_warehouse, rooftop_construction, pond_water_feature, container_luxury, narrow_space_build, exterior_normal_interior_unreal>",
-    "construction_type": "<e.g. excavation_and_burial, surface_renovation, structural_framing, etc.>",
+    "one_line_concept": "<one clickbait sentence — specific action + surprising result>",
+    "category": "<one of the categories listed above>",
+    "construction_type": "<excavation_and_burial|surface_renovation|structural_framing|container_modification|mechanical_installation|waterproofing_and_tiling|interior_finishing|landscape_and_planting|demolition_and_rebuild|hidden_mechanism_build>",
     "before_space": {{
-      "type": "<e.g. flat_grass_backyard, empty_pool, rusty_garage>",
-      "description": "<what it looks like at 0 seconds>",
-      "visual": "<specific colors, textures, mood>"
+      "type": "<specific space identifier>",
+      "description": "<what it looks like at second 0 — be SPECIFIC: colors, textures, objects, state of decay>",
+      "visual": "<exact color palette, mood, lighting — think cinematography>"
     }},
     "construction_process": {{
-      "stages": ["<stage 1: what happens first>", "<stage 2>", "<stage 3>", "<stage 4>", "<stage 5>"],
-      "heavy_machinery": ["<list machines or empty>"],
-      "worker_presence": "<high/medium/low>",
-      "key_materials": ["<main materials used>"],
-      "excavation_required": <true/false>
+      "stages": [
+        "<stage 1: what the viewer SEES — workers doing what with what tool?>",
+        "<stage 2: what visible change happens? what machinery is operating?>",
+        "<stage 3: what structure/material is being installed?>",
+        "<stage 4: what finishing work is visible?>",
+        "<stage 5: what is the LAST visible action before reveal?>"
+      ],
+      "heavy_machinery": ["<specific machines — excavator, mini crane, concrete mixer, etc.>"],
+      "worker_presence": "<high|medium|low>",
+      "key_materials": ["<specific materials with color — 'honey-toned cedar planks' not just 'wood'>"],
+      "excavation_required": true/false
     }},
     "after_space": {{
-      "type": "<e.g. underground_cinema, infinity_pool, secret_bar>",
-      "description": "<what the finished space looks like>",
-      "luxury_level": "<ultra/high/medium>",
-      "water_element": <true/false>,
-      "final_visual_hook": "<the single most impressive visual in the last 3 seconds>"
+      "type": "<specific finished space identifier>",
+      "description": "<what the finished space looks like — SPECIFIC luxury details, colors, textures>",
+      "luxury_level": "<ultra|high|medium>",
+      "water_element": true/false,
+      "final_visual_hook": "<the SINGLE most impressive visual in the last 3 seconds — be cinematic>"
     }},
-    "reveal_type": "<hidden_entrance_reveal / water_fill_reveal / lights_on_reveal / mechanical_reveal / walkthrough_reveal / aerial_reveal>",
+    "reveal_type": "<hidden_entrance_reveal|water_fill_reveal|lights_on_reveal|mechanical_reveal|walkthrough_reveal|aerial_reveal>",
     "time_structure": {{
-      "0_1s": "<before state>",
-      "1_4s": "<construction start>",
-      "4_10s": "<main build>",
-      "10_15s": "<finishing + reveal>"
+      "0_1s": "<what is visible — specific visual description>",
+      "1_4s": "<what construction action starts — specific>",
+      "4_10s": "<what major changes are visible — specific>",
+      "10_15s": "<what reveal moment happens — specific>"
     }},
     "camera_style": "{camera_id}",
-    "location_feel": "<e.g. American suburban, Mediterranean coastal, Scandinavian forest>",
-    "similarity_tags": ["<8-12 tags for dedup>"]
+    "location_feel": "<specific location vibe — 'Los Angeles hillside with palm trees' not just 'suburban'>",
+    "similarity_tags": ["<8-12 specific tags for deduplication>"]
   }}
 ]
 
-Make each candidate MAXIMALLY different: different spaces, different processes, different reveals."""
+Make each candidate WILDLY different from each other:
+- Different locations (different countries/climates)
+- Different before-states (don't repeat the same "empty backyard")
+- Different construction methods (not all excavation)
+- Different reveal moments (not all "lights turn on")
+- Different luxury aesthetics (not all "modern minimalist")"""
 
 
 def generate_candidates(
@@ -112,10 +163,10 @@ def generate_candidates(
     category_stats: dict,
 ) -> list[dict]:
     """
-    Two-stage candidate generation.
+    Two-stage candidate generation with content pillar rotation.
 
-    Stage 1: Select concept templates, pair with camera styles
-    Stage 2: LLM generates concrete scenarios per pair
+    Stage 1: Select concept templates, pair with camera styles and content pillars
+    Stage 2: LLM generates vivid concrete scenarios per combination
     """
     gen_config = config.get("generation", {})
     llm_config = config.get("llm", {})
@@ -131,12 +182,22 @@ def generate_candidates(
     selected = _select_templates(templates, history, count=n_templates)
     avoid_categories = _get_overused_categories(category_stats, categories_config)
 
+    # Get recent concepts to avoid repetition
+    recent_concepts = _get_recent_concepts(history, count=15)
+
+    # Track which content pillars we've used this run
+    used_pillars = []
+
     # Stage 2: Generate per template
     all_candidates = []
 
     for template in selected:
         # Pick a camera style
         camera_id, camera_cfg = _select_camera(cameras, template, history)
+
+        # Pick a content pillar (rotate through them)
+        pillar = _select_pillar(used_pillars)
+        used_pillars.append(pillar["id"])
 
         prompt = CANDIDATE_USER_PROMPT.format(
             count=n_per_template,
@@ -147,8 +208,11 @@ def generate_candidates(
             camera_id=camera_id,
             camera_label=camera_cfg.get("label", ""),
             camera_description=camera_cfg.get("description", ""),
+            pillar_name=pillar["name"],
+            pillar_examples="\n".join(f"  - {ex}" for ex in pillar["examples"]),
             compatible_categories=", ".join(categories_config.keys()),
             avoid_categories=", ".join(avoid_categories) if avoid_categories else "none",
+            recent_concepts="\n".join(f"  • {c}" for c in recent_concepts) if recent_concepts else "(none yet)",
         )
 
         try:
@@ -166,12 +230,13 @@ def generate_candidates(
 
             for c in candidates:
                 c["_concept_template"] = template["id"]
+                c["_content_pillar"] = pillar["id"]
                 c["camera_style"] = camera_id
                 all_candidates.append(c)
 
             logger.info(
-                "Template '%s' + camera '%s': %d candidates",
-                template["id"], camera_id, len(candidates),
+                "Template '%s' + pillar '%s' + camera '%s': %d candidates",
+                template["id"], pillar["id"], camera_id, len(candidates),
             )
         except Exception as e:
             logger.error("Generation failed for '%s': %s", template["id"], e)
@@ -181,130 +246,130 @@ def generate_candidates(
 
 
 def generate_candidates_dry(config: dict) -> list[dict]:
-    """Hardcoded examples for offline testing."""
+    """Hardcoded examples with rich visual detail for offline testing."""
     return [
         {
-            "one_line_concept": "Burying two shipping containers in the backyard to build an underground gym with a skylight",
-            "category": "underground_container",
-            "construction_type": "excavation_and_burial",
+            "one_line_concept": "Cutting a rectangular hole in a suburban rooftop to lower in a glass-bottom infinity pool visible from the living room below",
+            "category": "rooftop_construction",
+            "construction_type": "structural_framing",
             "before_space": {
-                "type": "suburban_backyard",
-                "description": "Flat grass yard with wooden fence",
-                "visual": "green grass, wood fence, boring suburban"
+                "type": "flat_gravel_rooftop",
+                "description": "Grey gravel-covered flat rooftop with rusted HVAC units, pigeon droppings, and cracked tar patches. Chain-link safety railing around edges.",
+                "visual": "desaturated grey and brown, harsh midday sun, industrial ugliness, city skyline in background hazy with smog"
             },
             "construction_process": {
                 "stages": [
-                    "Excavator digs deep rectangular pit",
-                    "Crane lowers two containers into pit",
-                    "Workers weld containers together",
-                    "Waterproofing and backfill",
-                    "Interior: rubber floor, mirrors, LED strips, skylight"
+                    "Workers in orange vests chalk outline on rooftop, diamond-blade saw cuts through concrete deck sending dust clouds skyward",
+                    "Mini crane hoists pre-fabricated steel pool frame through the new opening, workers guide it with ropes",
+                    "Welders attach frame to building structure, sparks cascade down through the opening, waterproofing membrane rolled across edges",
+                    "Glass-bottom panels carefully lowered and sealed, dark basalt coping stones mortared around perimeter",
+                    "Teak decking laid around pool, brushed-steel railing installed, water slowly fills — turquoise against grey city"
                 ],
-                "heavy_machinery": ["excavator", "crane"],
+                "heavy_machinery": ["mini crane", "diamond concrete saw", "welding rig"],
                 "worker_presence": "high",
-                "key_materials": ["shipping_container", "soil", "rubber_mat", "LED_strips"],
-                "excavation_required": True
-            },
-            "after_space": {
-                "type": "underground_gym",
-                "description": "Underground gym with mirrors, LEDs, skylight showing grass above",
-                "luxury_level": "high",
-                "water_element": False,
-                "final_visual_hook": "Skylight view from inside gym showing normal yard above"
-            },
-            "reveal_type": "lights_on_reveal",
-            "time_structure": {
-                "0_1s": "Flat boring backyard",
-                "1_4s": "Excavator rips into yard, huge pit",
-                "4_10s": "Containers lowered, welded, backfilled, interior built",
-                "10_15s": "Lights on: gym with mirrors, LEDs, skylight to grass above"
-            },
-            "camera_style": "crane_descend",
-            "location_feel": "American suburban",
-            "similarity_tags": ["container", "underground", "gym", "skylight", "excavation", "backyard", "mirror", "LED"],
-            "_concept_template": "dig_and_bury",
-        },
-        {
-            "one_line_concept": "Building a secret whiskey bar behind a rotating bookshelf in the basement",
-            "category": "exterior_normal_interior_unreal",
-            "construction_type": "hidden_mechanism_build",
-            "before_space": {
-                "type": "messy_basement",
-                "description": "Cluttered basement with old shelving",
-                "visual": "dim lighting, concrete walls, dusty shelves"
-            },
-            "construction_process": {
-                "stages": [
-                    "Clear out basement, demolish old wall",
-                    "Build rotating door mechanism frame",
-                    "Construct bookshelf facade with real books",
-                    "Behind wall: brick, bar counter, whiskey shelves",
-                    "Leather stools, ambient lighting, finishing"
-                ],
-                "heavy_machinery": [],
-                "worker_presence": "medium",
-                "key_materials": ["brick", "wood", "steel_bearings", "leather", "glass"],
+                "key_materials": ["reinforced steel frame", "tempered glass panels", "dark basalt coping", "teak decking", "waterproofing membrane"],
                 "excavation_required": False
             },
             "after_space": {
-                "type": "secret_whiskey_bar",
-                "description": "Brick-walled speakeasy bar with leather stools, warm lighting",
+                "type": "rooftop_glass_bottom_pool",
+                "description": "Infinity-edge rooftop pool with dark basalt surround, turquoise water, teak deck with loungers, city skyline panorama. Glass bottom shows living room chandelier below.",
                 "luxury_level": "ultra",
-                "water_element": False,
-                "final_visual_hook": "Push bookshelf, it rotates to reveal glowing bar behind"
-            },
-            "reveal_type": "mechanical_reveal",
-            "time_structure": {
-                "0_1s": "Normal basement with bookshelf",
-                "1_4s": "Demolition, mechanism frame build",
-                "4_10s": "Brick wall, bar counter, shelving, bookshelf facade",
-                "10_15s": "Push bookshelf → rotates → warm glow of whiskey bar"
-            },
-            "camera_style": "walkthrough_reveal",
-            "location_feel": "American East Coast brownstone",
-            "similarity_tags": ["bookshelf", "secret_door", "whiskey", "bar", "basement", "brick", "rotating", "speakeasy"],
-            "_concept_template": "hidden_behind",
-        },
-        {
-            "one_line_concept": "Digging a natural swimming pond with underwater viewing window in the backyard",
-            "category": "pond_water_feature",
-            "construction_type": "excavation_and_burial",
-            "before_space": {
-                "type": "empty_yard",
-                "description": "Wide empty backyard, just grass",
-                "visual": "flat green, nothing special"
-            },
-            "construction_process": {
-                "stages": [
-                    "Excavator shapes pond basin",
-                    "Lay waterproof liner, pile rocks for edges",
-                    "Build wooden dock extending over water",
-                    "Install acrylic panel in side wall for underwater view",
-                    "Fill with water, add aquatic plants"
-                ],
-                "heavy_machinery": ["excavator"],
-                "worker_presence": "high",
-                "key_materials": ["pond_liner", "stone", "wood", "acrylic_panel", "aquatic_plants"],
-                "excavation_required": True
-            },
-            "after_space": {
-                "type": "swimming_pond_with_window",
-                "description": "Natural pond, wooden dock, underground viewing window shows fish",
-                "luxury_level": "high",
                 "water_element": True,
-                "final_visual_hook": "View from underwater window: fish swimming, sunlight filtering through"
+                "final_visual_hook": "Camera holds on pool as sunset paints water gold, then subtle tilt down reveals living room chandelier glowing through glass bottom"
             },
             "reveal_type": "water_fill_reveal",
             "time_structure": {
-                "0_1s": "Empty grass yard",
-                "1_4s": "Excavator carves pond shape",
-                "4_10s": "Liner, rocks, dock, viewing window installed",
-                "10_15s": "Water fills up, plants placed, underwater window view"
+                "0_1s": "Ugly gravel rooftop with rusted HVAC, harsh flat light",
+                "1_4s": "Concrete saw cuts rectangle, dust billows, crane arrives",
+                "4_10s": "Steel frame lowered, welding sparks, glass panels sealed, basalt placed",
+                "10_15s": "Water fills to turquoise, sunset hits, glass bottom reveals living room below"
             },
             "camera_style": "drone_overhead",
-            "location_feel": "Northern European countryside",
-            "similarity_tags": ["pond", "swimming", "underwater_window", "dock", "excavation", "natural", "fish", "plants"],
-            "_concept_template": "water_creation",
+            "location_feel": "Manhattan-style dense urban skyline, hazy afternoon light",
+            "similarity_tags": ["rooftop", "glass_bottom", "pool", "infinity_edge", "urban", "skyline", "crane", "basalt", "teak", "sunset"],
+            "_concept_template": "stack_and_build_up",
+        },
+        {
+            "one_line_concept": "Excavating beneath a crumbling garden shed to build a hidden Japanese onsen bath with natural volcanic stone",
+            "category": "underground_container",
+            "construction_type": "excavation_and_burial",
+            "before_space": {
+                "type": "old_garden_shed",
+                "description": "Weathered wooden garden shed with peeling green paint, cobwebbed windows, rusty tools hanging on walls. Overgrown ivy climbing one side.",
+                "visual": "muted greens and browns, dappled forest light through overhead maple leaves, nostalgic but neglected"
+            },
+            "construction_process": {
+                "stages": [
+                    "Workers pull up shed floorboards, compact excavator squeezes through doorway and begins digging downward, soil hauled out in buckets",
+                    "Concrete foundation walls poured in underground chamber, waterproofing painted on, drainage pipes laid in gravel bed",
+                    "Natural volcanic basalt stones carefully placed to form soaking tub basin, copper hot water pipes threaded through walls",
+                    "Cedar plank walls and ceiling installed, recessed warm LED strips hidden in joints, bamboo privacy screen at entrance",
+                    "Tub filled with steaming water, river stones placed around edge, single bonsai on cedar shelf, steam rises through shed above"
+                ],
+                "heavy_machinery": ["compact excavator"],
+                "worker_presence": "medium",
+                "key_materials": ["volcanic basalt stone", "western red cedar planks", "copper piping", "warm LED strips", "river stones", "bamboo"],
+                "excavation_required": True
+            },
+            "after_space": {
+                "type": "hidden_underground_onsen",
+                "description": "Traditional Japanese onsen bath beneath garden shed — volcanic stone soaking tub, cedar walls with warm LED glow, bamboo accents, steam rising. Accessed through trapdoor in shed floor.",
+                "luxury_level": "ultra",
+                "water_element": True,
+                "final_visual_hook": "Steam rises through the shed floorboards above, camera descends through trapdoor to reveal warm cedar-and-stone onsen glowing amber below"
+            },
+            "reveal_type": "hidden_entrance_reveal",
+            "time_structure": {
+                "0_1s": "Old garden shed, peeling paint, cobwebs, dappled light through leaves",
+                "1_4s": "Floorboards ripped up, excavator digs down, soil hauled up in buckets",
+                "4_10s": "Underground chamber formed, basalt tub built, cedar walls installed",
+                "10_15s": "Hot water fills tub, steam rises, warm amber LED glow, bonsai placed on shelf"
+            },
+            "camera_style": "crane_descend",
+            "location_feel": "Pacific Northwest forest clearing, moss and ferns, overcast filtered light",
+            "similarity_tags": ["onsen", "underground", "japanese", "cedar", "volcanic_stone", "steam", "hidden", "garden_shed", "trapdoor", "bonsai"],
+            "_concept_template": "dig_and_bury",
+        },
+        {
+            "one_line_concept": "Converting a rusted 1960s Airstream trailer into a mirror-clad minimalist recording studio in the Nevada desert",
+            "category": "container_luxury",
+            "construction_type": "container_modification",
+            "before_space": {
+                "type": "abandoned_airstream",
+                "description": "Dented silver Airstream trailer with oxidized aluminum skin, flat tires, broken windows stuffed with newspaper. Parked on cracked desert hardpan.",
+                "visual": "bleached desert palette — pale sand, oxidized silver, washed-out blue sky, heat shimmer on horizon"
+            },
+            "construction_process": {
+                "stages": [
+                    "Workers strip interior to bare shell, angle grinder sparks fly cutting out rusted panels, sandblaster strips oxidation from exterior",
+                    "New structural ribs welded inside, spray foam insulation fills cavities, acoustic isolation panels bolted to frame",
+                    "Exterior wrapped in mirror-polished stainless steel panels, reflecting desert landscape in distorted curves",
+                    "Interior: charcoal acoustic fabric walls, floating birch plywood desk, studio monitors mounted, cable management routed through floor",
+                    "Final: amber pendant lights hung, vocal booth glass installed, exterior mirrors catch sunset making trailer glow like liquid gold"
+                ],
+                "heavy_machinery": ["angle grinder", "sandblaster", "welding rig"],
+                "worker_presence": "medium",
+                "key_materials": ["mirror-polished stainless steel", "acoustic foam panels", "charcoal fabric", "birch plywood", "amber glass pendants"],
+                "excavation_required": False
+            },
+            "after_space": {
+                "type": "desert_mirror_studio",
+                "description": "Mirror-clad Airstream reflecting infinite desert. Inside: intimate recording studio with charcoal acoustic walls, birch desk, warm amber lighting. Outside disappears in reflections.",
+                "luxury_level": "high",
+                "water_element": False,
+                "final_visual_hook": "Sunset hits mirror exterior — entire trailer becomes a glowing gold sculpture in the desert, then door opens revealing warm amber studio interior"
+            },
+            "reveal_type": "lights_on_reveal",
+            "time_structure": {
+                "0_1s": "Rusted Airstream on cracked desert floor, heat shimmer, bleached landscape",
+                "1_4s": "Grinder sparks, sandblasting clouds, interior stripped bare",
+                "4_10s": "Mirror panels mounted, acoustic interior built, equipment installed",
+                "10_15s": "Sunset turns mirrors to gold, door opens, warm amber studio interior revealed"
+            },
+            "camera_style": "fixed_wide",
+            "location_feel": "Nevada high desert, Joshua trees, vast empty sky, dramatic golden hour light",
+            "similarity_tags": ["airstream", "desert", "mirror", "recording_studio", "acoustic", "renovation", "stainless_steel", "sunset", "minimalist"],
+            "_concept_template": "convert_vehicle",
         },
     ]
 
@@ -329,10 +394,6 @@ def _select_templates(templates, history, count=10):
 
 def _select_camera(cameras, template, history):
     """Select camera style based on template and recent usage."""
-    best_for_map = {}
-    for cam_id, cam_cfg in cameras.items():
-        best_for_map[cam_id] = cam_cfg
-
     # Simple selection: pick a camera not used in last 3
     recent_cams = []
     for entry in history[-3:]:
@@ -345,6 +406,20 @@ def _select_camera(cameras, template, history):
 
     random.shuffle(candidates)
     return candidates[0]
+
+
+def _select_pillar(used_pillars: list[str]) -> dict:
+    """Select a content pillar, rotating through them evenly."""
+    # Count usage
+    usage = {}
+    for pid in used_pillars:
+        usage[pid] = usage.get(pid, 0) + 1
+
+    # Find least-used pillars
+    min_usage = min((usage.get(p["id"], 0) for p in CONTENT_PILLARS), default=0)
+    candidates = [p for p in CONTENT_PILLARS if usage.get(p["id"], 0) == min_usage]
+
+    return random.choice(candidates)
 
 
 def _get_overused_categories(stats, categories_config):
@@ -361,6 +436,17 @@ def _get_overused_categories(stats, categories_config):
         if actual > target + 0.05:
             overused.append(cat_id)
     return overused
+
+
+def _get_recent_concepts(history: list[dict], count: int = 15) -> list[str]:
+    """Extract recent one_line_concepts from history for dedup."""
+    concepts = []
+    for entry in history[-count:]:
+        sc = entry.get("scenario", {})
+        concept = sc.get("one_line_concept", "")
+        if concept:
+            concepts.append(concept)
+    return concepts
 
 
 def _parse_json(raw):

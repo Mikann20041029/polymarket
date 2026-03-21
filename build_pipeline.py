@@ -4,6 +4,13 @@ Construction Timelapse Luxury Transformation Video Pipeline.
 
 rebornspacestv-style: construction process + luxury reveal shorts.
 
+3-STAGE VIDEO ARCHITECTURE:
+  Stage 1 (5s): Before state + first construction activity
+  Stage 2 (5s): Main construction — workers, machinery, dust, shadows
+  Stage 3 (5s): Finishing touches + luxury reveal with lighting shift
+
+Each stage = 1 AI-generated clip. Stitched together for 15s total.
+
 Usage:
     # Full dry-run with hardcoded examples (no API needed)
     python build_pipeline.py --offline
@@ -112,7 +119,7 @@ def run_offline(config: dict) -> None:
     stats = update_stats_after_selection(winner, stats, categories_config)
     save_category_stats(stats, CATEGORY_STATS_PATH)
 
-    # Generate video prompt (fallback, no LLM)
+    # Generate video prompts (3-stage, no LLM)
     prompts = build_video_prompt_dry(winner, config)
 
     # Output
@@ -175,7 +182,7 @@ def run_dry(config: dict) -> None:
     stats = update_stats_after_selection(winner, stats, categories_config)
     save_category_stats(stats, CATEGORY_STATS_PATH)
 
-    # Generate video prompt via LLM
+    # Generate 3-stage video prompts via LLM
     prompts = build_video_prompt(winner, client, config)
 
     # Output
@@ -187,7 +194,7 @@ def run_dry(config: dict) -> None:
 
 
 def run_generate(config: dict) -> None:
-    """Full generation: scenario → video clip → SFX → compose final video."""
+    """Full generation: scenario → 3 video clips → 3 SFX → compose final video."""
     from scenario.generator import generate_candidates
     from scenario.similarity import filter_candidates
     from scenario.scorer import score_candidates_llm, filter_by_score
@@ -206,7 +213,7 @@ def run_generate(config: dict) -> None:
     history = load_history(HISTORY_PATH)
     stats = load_category_stats(CATEGORY_STATS_PATH)
 
-    logger.info("=== FULL GENERATION MODE ===")
+    logger.info("=== FULL GENERATION MODE (3-stage architecture) ===")
     logger.info("History: %d past builds", len(history))
 
     # ── Stage 1: Scenario selection (same as dry-run) ────
@@ -236,63 +243,104 @@ def run_generate(config: dict) -> None:
     stats = update_stats_after_selection(winner, stats, categories_config)
     save_category_stats(stats, CATEGORY_STATS_PATH)
 
-    # ── Stage 2: Generate video prompt via LLM ───────────
+    # ── Stage 2: Generate 3-stage video prompts via LLM ──
     prompts = build_video_prompt(winner, client, config)
     _print_results(winner, prompts, config)
 
-    video_prompt = prompts.get("video_prompt", "")
-    sfx_prompt = prompts.get("sfx_prompt", "")
-    duration = prompts.get("duration_seconds", 15)
+    stages = prompts.get("stages", [])
+    if not stages:
+        # Legacy fallback: single prompt
+        stages = [{
+            "stage": 1,
+            "name": "full",
+            "video_prompt": prompts.get("video_prompt", ""),
+            "sfx_prompt": prompts.get("sfx_prompt", ""),
+            "duration_seconds": 15,
+        }]
 
-    if not video_prompt:
-        logger.error("No video prompt generated.")
+    # ── Stage 3: Check balance for all clips ─────────────
+    num_clips = len(stages)
+    if not check_fal_balance(num_clips):
+        logger.error("Insufficient fal.ai balance for %d clips. Top up and retry.", num_clips)
         sys.exit(1)
 
-    # ── Stage 3: Check balance ───────────────────────────
-    if not check_fal_balance(1):
-        logger.error("Insufficient fal.ai balance. Top up and retry.")
-        sys.exit(1)
-
-    # ── Stage 4: Generate video clip via Wan 2.1 ─────────
+    # ── Stage 4: Generate video clips (one per stage) ────
     output_dir = BASE_DIR / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = output_dir / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    clip_path = temp_dir / "clip_01.mp4"
-    logger.info("Generating video clip via fal.ai Wan 2.1...")
-    generate_clip(video_prompt, clip_path)
-    logger.info("Video clip generated: %s", clip_path)
+    clip_paths = []
+    sfx_results = []
+    scene_data = []
 
-    # ── Stage 5: Generate SFX via ElevenLabs ─────────────
-    sfx_path = temp_dir / "sfx_01.mp3"
-    logger.info("Generating SFX via ElevenLabs...")
-    sfx_result = generate_sfx(
-        prompt=sfx_prompt,
-        output_path=sfx_path,
-        duration=duration,
-    )
-    logger.info("SFX generated: %s", sfx_result["audio_path"])
+    for stage in stages:
+        stage_num = stage["stage"]
+        stage_name = stage["name"]
+        video_prompt = stage["video_prompt"]
+        sfx_prompt = stage["sfx_prompt"]
+        duration = stage.get("duration_seconds", 5)
 
-    # ── Stage 6: Compose final video ─────────────────────
+        if not video_prompt:
+            logger.error("Empty video prompt for stage %d (%s)", stage_num, stage_name)
+            sys.exit(1)
+
+        # Generate video clip
+        clip_path = temp_dir / f"clip_{stage_num:02d}_{stage_name}.mp4"
+        logger.info("Generating clip %d/3 (%s)...", stage_num, stage_name)
+        generate_clip(video_prompt, clip_path)
+        clip_paths.append(str(clip_path))
+        logger.info("Clip %d saved: %s", stage_num, clip_path)
+
+        # Generate SFX
+        sfx_path = temp_dir / f"sfx_{stage_num:02d}_{stage_name}.mp3"
+        logger.info("Generating SFX %d/3 (%s)...", stage_num, stage_name)
+        sfx_result = generate_sfx(
+            prompt=sfx_prompt,
+            output_path=sfx_path,
+            duration=duration,
+        )
+        sfx_results.append(sfx_result)
+        logger.info("SFX %d saved: %s", stage_num, sfx_result["audio_path"])
+
+        scene_data.append({
+            "video_prompt": video_prompt,
+            "sfx_prompt": sfx_prompt,
+            "text_overlay": "",  # No text overlay — let the visuals speak
+        })
+
+    # ── Stage 5: Compose final video (3 clips → 1) ──────
     now = datetime.now(timezone.utc)
     final_filename = f"build_{now.strftime('%Y%m%d_%H%M%S')}.mp4"
     final_path = output_dir / final_filename
 
-    scene_data = [{
-        "video_prompt": video_prompt,
-        "sfx_prompt": sfx_prompt,
-        "text_overlay": winner.get("one_line_concept", ""),
-    }]
-
-    logger.info("Composing final video...")
+    logger.info("Composing final video from %d clips...", len(clip_paths))
     compose_final_video(
-        video_paths=[str(clip_path)],
-        sfx_results=[sfx_result],
+        video_paths=clip_paths,
+        sfx_results=sfx_results,
         scenes=scene_data,
         output_path=final_path,
     )
     logger.info("Final video saved: %s", final_path)
+
+    # ── Stage 6: Upload to YouTube ───────────────────────
+    import os
+    if os.getenv("YOUTUBE_REFRESH_TOKEN"):
+        from upload.youtube import upload_to_youtube
+        logger.info("Uploading to YouTube Shorts...")
+        try:
+            yt_result = upload_to_youtube(
+                video_path=str(final_path),
+                scenario=winner,
+                privacy="public",
+            )
+            logger.info("YouTube upload complete: %s", yt_result.get("url", ""))
+        except Exception as e:
+            logger.error("YouTube upload failed: %s", e)
+            logger.info("Video saved locally — upload manually if needed.")
+    else:
+        logger.info("YOUTUBE_REFRESH_TOKEN not set — skipping YouTube upload.")
+        logger.info("Run setup_youtube_auth.py to enable auto-upload.")
 
     # ── Save JSON output alongside ───────────────────────
     _save_run_output(winner, prompts)
@@ -304,10 +352,9 @@ def run_generate(config: dict) -> None:
 def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
     """Print formatted results to stdout."""
     gen_config = config.get("generation", {})
-    duration = gen_config.get("duration_seconds", 15)
 
     print("\n" + "=" * 70)
-    print("  SELECTED CONSTRUCTION TIMELAPSE SCENARIO")
+    print("  SELECTED CONSTRUCTION TRANSFORMATION SCENARIO")
     print("=" * 70)
     print(f"  Concept:     {scenario.get('one_line_concept', 'N/A')}")
     print(f"  Category:    {scenario.get('category', 'N/A')}")
@@ -315,45 +362,35 @@ def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
     print(f"  Camera:      {scenario.get('camera_style', 'N/A')}")
     print(f"  Reveal:      {scenario.get('reveal_type', 'N/A')}")
     print(f"  Location:    {scenario.get('location_feel', 'N/A')}")
-    print(f"  Duration:    {duration}s (single timelapse clip)")
+    print(f"  Architecture: 3-stage (5s × 3 = 15s total)")
     print()
 
     # Before space
     before = scenario.get("before_space", {})
-    print(f"  BEFORE (0-1s):")
+    print(f"  BEFORE STATE:")
     print(f"    {before.get('description', 'N/A')}")
     print(f"    Visual: {before.get('visual', 'N/A')}")
     print()
 
     # Construction process
     proc = scenario.get("construction_process", {})
-    print(f"  CONSTRUCTION PROCESS (1-10s):")
+    print(f"  CONSTRUCTION PROCESS:")
     for i, stage in enumerate(proc.get("stages", []), 1):
         print(f"    {i}. {stage}")
-    print(f"    Machinery:  {', '.join(proc.get('heavy_machinery', [])) or 'none'}")
+    print(f"    Machinery:  {', '.join(proc.get('heavy_machinery', [])) or 'hand tools'}")
     print(f"    Workers:    {proc.get('worker_presence', 'N/A')}")
-    print(f"    Materials:  {', '.join(proc.get('key_materials', []))}")
-    print(f"    Excavation: {'yes' if proc.get('excavation_required') else 'no'}")
+    materials = proc.get("key_materials", [])
+    print(f"    Materials:  {', '.join(materials[:5])}")
     print()
 
     # After space
     after = scenario.get("after_space", {})
-    print(f"  REVEAL (10-15s):")
+    print(f"  REVEAL:")
     print(f"    {after.get('description', 'N/A')}")
     print(f"    Luxury:     {after.get('luxury_level', 'N/A')}")
     print(f"    Water:      {'yes' if after.get('water_element') else 'no'}")
     print(f"    Hook:       {after.get('final_visual_hook', 'N/A')}")
     print()
-
-    # Time structure
-    ts = scenario.get("time_structure", {})
-    if ts:
-        print(f"  TIME STRUCTURE:")
-        print(f"    0-1s:   {ts.get('0_1s', 'N/A')}")
-        print(f"    1-4s:   {ts.get('1_4s', 'N/A')}")
-        print(f"    4-10s:  {ts.get('4_10s', 'N/A')}")
-        print(f"    10-15s: {ts.get('10_15s', 'N/A')}")
-        print()
 
     # Scores
     buzz = scenario.get("buzz_score", {})
@@ -367,32 +404,47 @@ def _print_results(scenario: dict, prompts: dict, config: dict) -> None:
         print(f"    {'Adjusted score':40s}       {scenario.get('adjusted_score', 0):.1f}")
     print()
 
-    # Tags
     print(f"  Tags: {', '.join(scenario.get('similarity_tags', []))}")
     print()
 
-    # Video prompt
-    video_prompt = prompts.get("video_prompt", "")
-    sfx_prompt = prompts.get("sfx_prompt", "")
-    if video_prompt:
+    # 3-stage video prompts
+    stages = prompts.get("stages", [])
+    if stages:
         print("-" * 70)
-        print("  VIDEO PROMPT (single 15s timelapse)")
+        print("  3-STAGE VIDEO PROMPTS")
         print("-" * 70)
-        print(f"  {video_prompt}")
+        print(f"  Camera: {prompts.get('camera_description', 'N/A')}")
         print()
-        print(f"  SFX: {sfx_prompt}")
-        print()
+        for stage in stages:
+            name = stage.get("name", "unknown").upper()
+            dur = stage.get("duration_seconds", 5)
+            print(f"  [{name}] ({dur}s):")
+            print(f"    Video: {stage.get('video_prompt', 'N/A')}")
+            print(f"    SFX:   {stage.get('sfx_prompt', 'N/A')}")
+            print()
+    else:
+        # Legacy single prompt
+        video_prompt = prompts.get("video_prompt", "")
+        sfx_prompt = prompts.get("sfx_prompt", "")
+        if video_prompt:
+            print("-" * 70)
+            print("  VIDEO PROMPT")
+            print("-" * 70)
+            print(f"  {video_prompt}")
+            print(f"  SFX: {sfx_prompt}")
+            print()
 
     # Cost estimate
     video_config = config.get("video", {})
-    max_cost = video_config.get("max_cost_per_video_usd", 0.35)
+    max_cost = video_config.get("max_cost_per_video_usd", 0.75)
+    num_clips = len(stages) if stages else 1
     print("-" * 70)
     print("  COST ESTIMATE (if generated)")
     print("-" * 70)
-    print(f"  Video (1 clip, {duration}s):       model-dependent")
-    print(f"  SFX   (1 clip):               ~$0.01")
-    print(f"  LLM   (candidates + scoring): ~$0.003")
-    print(f"  Hard ceiling:                 ${max_cost:.2f} (~50 JPY)")
+    print(f"  Video ({num_clips} clips × 5s):     ~${num_clips * 0.20:.2f}")
+    print(f"  SFX   ({num_clips} clips):           ~${num_clips * 0.01:.2f}")
+    print(f"  LLM   (candidates + scoring):  ~$0.003")
+    print(f"  Hard ceiling:                  ${max_cost:.2f}")
     print("=" * 70 + "\n")
 
 
@@ -406,6 +458,7 @@ def _save_run_output(scenario: dict, prompts: dict) -> None:
 
     output = {
         "created_at": now.isoformat(),
+        "architecture": "3-stage (5s × 3)",
         "scenario": {
             k: v for k, v in scenario.items()
             if not k.startswith("_")
@@ -423,13 +476,13 @@ def _save_run_output(scenario: dict, prompts: dict) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Construction Timelapse Luxury Transformation Pipeline",
+        description="Construction Timelapse Luxury Transformation Pipeline (3-stage)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Modes:
   --offline    Fully offline. No API calls. Uses hardcoded examples.
   --dry-run    LLM-only mode. Generates real candidates via DeepSeek (~$0.003).
-  --generate   Full video generation. LOCKED until config.yaml dry_run=false.
+  --generate   Full video generation. 3 clips + 3 SFX + compositing.
         """,
     )
     parser.add_argument(

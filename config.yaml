@@ -1,23 +1,35 @@
 # Construction Timelapse Luxury Space Transformation System
 # rebornspacestv-style: construction process + luxury reveal shorts
+#
+# 3-STAGE ARCHITECTURE: each video = 3 clips × 5 seconds = 15 seconds
+# Stage 1: Before state + first construction
+# Stage 2: Main construction activity
+# Stage 3: Finishing + luxury reveal
 
 # ── Generation ───────────────────────────────────────────
-# 1 video = 1 continuous 15-second timelapse clip
 generation:
   candidates_per_template: 3       # scenarios per concept template
   min_concept_templates: 10        # concept templates per run
   min_total_candidates: 30
-  duration_seconds: 15
-  min_duration_seconds: 10
-  max_duration_seconds: 15
+  duration_seconds: 15             # total video length
+  clips_per_video: 3              # 3 stages × 5 seconds each
+  clip_duration_seconds: 5         # each AI clip is 5 seconds
 
-# ── Video Time Structure ─────────────────────────────────
-# Construction timelapse progression within ONE 15s clip:
-time_structure:
-  before_show: 1.0          # 0-1s: original space clearly visible
-  construction_start: 4.0   # 1-4s: excavation/demolition/first work
-  main_build: 10.0          # 4-10s: major structural changes
-  reveal_start: 10.0        # 10-15s: finishing + completion reveal
+# ── Video Stage Structure ────────────────────────────────
+# 3 separate 5-second clips stitched together:
+stage_structure:
+  stage_1_before:
+    duration: 5.0
+    name: "Before + First Work"
+    purpose: "Show ugly/empty space, then construction begins"
+  stage_2_construction:
+    duration: 5.0
+    name: "Main Build"
+    purpose: "Active construction — workers, machinery, dust, shadows"
+  stage_3_reveal:
+    duration: 5.0
+    name: "Reveal"
+    purpose: "Finishing touches, lighting shift, luxury space revealed"
 
 # ── LLM ──────────────────────────────────────────────────
 llm:
@@ -189,7 +201,7 @@ concept_templates:
 # ── Camera Styles ────────────────────────────────────────
 camera_styles:
   drone_overhead:
-    label: "Drone Overhead Timelapse"
+    label: "Drone Overhead"
     description: "Top-down or angled aerial view of the entire work site"
     traits: "stable hover, wide angle, shows full site progression"
     best_for: ["excavation", "landscape", "pool", "rooftop"]
@@ -197,7 +209,7 @@ camera_styles:
   fixed_wide:
     label: "Fixed Wide Angle"
     description: "Tripod-mounted wide shot showing the full space"
-    traits: "fixed position, everything visible, classic timelapse feel"
+    traits: "fixed position, everything visible, classic construction feel"
     best_for: ["garage", "interior", "container", "narrow_space"]
 
   walkthrough_reveal:
@@ -212,14 +224,14 @@ camera_styles:
     traits: "starts high showing before, descends into finished space"
     best_for: ["underground", "sunken", "pool", "excavation"]
 
-# ── Dry Run ──────────────────────────────────────────────
-dry_run: false
-
-# ── Video Generation (locked behind dry_run) ─────────────
+# ── Video Generation ─────────────────────────────────────
 video:
   model: "wan-2.1"
   resolution: "480p"
-  max_cost_per_video_usd: 0.35
+  max_cost_per_video_usd: 0.75    # 3 clips × $0.20 + SFX + LLM
+
+# ── Dry Run ──────────────────────────────────────────────
+dry_run: false
 
 # ── Output ───────────────────────────────────────────────
 output:
