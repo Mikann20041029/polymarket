@@ -1,7 +1,11 @@
 """
 Ambient sound effects generation using ElevenLabs Sound Effects V2 API.
 Generates environmental/atmospheric sounds for scene immersion.
+
+If ElevenLabs fails (auth, quota, network), falls back to silent audio
+so that video generation is never wasted.
 """
+import subprocess
 import time
 import logging
 import argparse
@@ -15,16 +19,70 @@ API_URL = "https://api.elevenlabs.io/v1/sound-generation"
 MAX_RETRIES = 3
 
 
+def _generate_silent_fallback(output_path: Path, duration: float) -> dict:
+    """Generate a silent MP3 file using ffmpeg as fallback."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i",
+                f"anullsrc=r=44100:cl=stereo",
+                "-t", str(duration), "-q:a", "9",
+                str(output_path),
+            ],
+            capture_output=True, timeout=30,
+        )
+        logger.info(f"Silent fallback SFX: {output_path}")
+    except Exception as e:
+        logger.warning(f"ffmpeg silent fallback failed ({e}), writing empty file")
+        output_path.write_bytes(b"")
+    return {
+        "audio_path": str(output_path),
+        "duration": duration,
+        "prompt": "(silent fallback)",
+        "fallback": True,
+    }
+
+
+def check_elevenlabs_auth() -> bool:
+    """Quick auth check before spending money on video clips."""
+    if not config.ELEVENLABS_API_KEY:
+        logger.warning("ELEVENLABS_API_KEY not set — SFX will use silent fallback")
+        return False
+    try:
+        resp = requests.get(
+            "https://api.elevenlabs.io/v1/user",
+            headers={"xi-api-key": config.ELEVENLABS_API_KEY},
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            logger.warning("ELEVENLABS_API_KEY is invalid (401) — SFX will use silent fallback")
+            return False
+        if resp.status_code == 200:
+            logger.info("ElevenLabs auth OK")
+            return True
+        logger.warning(f"ElevenLabs auth check returned {resp.status_code}")
+        return False
+    except Exception as e:
+        logger.warning(f"ElevenLabs auth check failed ({e}) — SFX will use silent fallback")
+        return False
+
+
 def generate_sfx(
     prompt: str,
     output_path: Path,
     duration: float = None,
 ) -> dict:
-    """Generate an ambient sound effect. Retries on transient failures."""
+    """Generate an ambient sound effect. Falls back to silence on failure."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     duration = duration or config.SFX_DURATION_SECONDS
+
+    if not config.ELEVENLABS_API_KEY:
+        logger.warning("No ELEVENLABS_API_KEY — using silent fallback")
+        return _generate_silent_fallback(output_path, duration)
 
     headers = {
         "xi-api-key": config.ELEVENLABS_API_KEY,
@@ -56,12 +114,14 @@ def generate_sfx(
                 continue
 
             if resp.status_code == 401:
-                raise RuntimeError("ElevenLabs auth failed — check ELEVENLABS_API_KEY")
+                logger.error("ElevenLabs auth failed (401) — using silent fallback")
+                return _generate_silent_fallback(output_path, duration)
 
             resp.raise_for_status()
 
             if len(resp.content) < 1000:
-                raise RuntimeError(f"SFX response too small ({len(resp.content)} bytes)")
+                logger.warning(f"SFX response too small ({len(resp.content)} bytes)")
+                return _generate_silent_fallback(output_path, duration)
 
             with open(output_path, "wb") as f:
                 f.write(resp.content)
@@ -79,7 +139,8 @@ def generate_sfx(
             logger.warning(f"Connection error (attempt {attempt+1}/{MAX_RETRIES}), retry in {wait}s")
             time.sleep(wait)
 
-    raise RuntimeError(f"SFX generation failed after {MAX_RETRIES} attempts: {last_error}")
+    logger.error(f"SFX generation failed after {MAX_RETRIES} attempts: {last_error}")
+    return _generate_silent_fallback(output_path, duration)
 
 
 def generate_all_scene_sfx(scenes: list[dict], output_dir: Path) -> list[dict]:
