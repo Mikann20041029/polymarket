@@ -337,11 +337,17 @@ def run_generate(config: dict) -> None:
             "duration_seconds": 15,
         }]
 
-    # ── Stage 3: Check balance for all clips ─────────────
+    # ── Stage 3: Pre-validate APIs before spending money ──
     num_clips = len(stages)
     if not check_fal_balance(num_clips):
         logger.error("Insufficient fal.ai balance for %d clips. Top up and retry.", num_clips)
         sys.exit(1)
+
+    # Pre-check ElevenLabs auth so we know before generating video
+    from sfx.elevenlabs_sfx import check_elevenlabs_auth
+    sfx_available = check_elevenlabs_auth()
+    if not sfx_available:
+        logger.warning("ElevenLabs unavailable — video will use silent audio")
 
     # ── Stage 4: Generate video clips (one per stage) ────
     output_dir = BASE_DIR / "output"
@@ -353,6 +359,7 @@ def run_generate(config: dict) -> None:
     sfx_results = []
     scene_data = []
 
+    total_stages = len(stages)
     for stage in stages:
         stage_num = stage["stage"]
         stage_name = stage["name"]
@@ -366,26 +373,35 @@ def run_generate(config: dict) -> None:
 
         # Generate video clip
         clip_path = temp_dir / f"clip_{stage_num:02d}_{stage_name}.mp4"
-        logger.info("Generating clip %d/3 (%s)...", stage_num, stage_name)
-        generate_clip(video_prompt, clip_path)
+        logger.info("Generating clip %d/%d (%s)...", stage_num, total_stages, stage_name)
+        try:
+            generate_clip(video_prompt, clip_path)
+        except Exception as e:
+            logger.error("Clip %d/%d FAILED: %s", stage_num, total_stages, e)
+            logger.error("Video generation aborted at stage %d. %d clips were generated before failure.",
+                         stage_num, len(clip_paths))
+            sys.exit(1)
         clip_paths.append(str(clip_path))
         logger.info("Clip %d saved: %s", stage_num, clip_path)
 
-        # Generate SFX
+        # Generate SFX (non-fatal — falls back to silence)
         sfx_path = temp_dir / f"sfx_{stage_num:02d}_{stage_name}.mp3"
-        logger.info("Generating SFX %d/3 (%s)...", stage_num, stage_name)
+        logger.info("Generating SFX %d/%d (%s)...", stage_num, total_stages, stage_name)
         sfx_result = generate_sfx(
             prompt=sfx_prompt,
             output_path=sfx_path,
             duration=duration,
         )
         sfx_results.append(sfx_result)
-        logger.info("SFX %d saved: %s", stage_num, sfx_result["audio_path"])
+        if sfx_result.get("fallback"):
+            logger.warning("SFX %d using silent fallback", stage_num)
+        else:
+            logger.info("SFX %d saved: %s", stage_num, sfx_result["audio_path"])
 
         scene_data.append({
             "video_prompt": video_prompt,
             "sfx_prompt": sfx_prompt,
-            "text_overlay": "",  # No text overlay — let the visuals speak
+            "text_overlay": "",
         })
 
     # ── Stage 5: Compose final video (3 clips → 1) ──────
