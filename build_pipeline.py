@@ -294,6 +294,25 @@ def run_generate(config: dict) -> None:
     )
     logger.info("Final video saved: %s", final_path)
 
+    # ── Stage 7: Upload to YouTube ───────────────────────
+    import os
+    if os.getenv("YOUTUBE_REFRESH_TOKEN"):
+        from upload.youtube import upload_to_youtube
+        logger.info("Uploading to YouTube Shorts...")
+        try:
+            yt_result = upload_to_youtube(
+                video_path=str(final_path),
+                scenario=winner,
+                privacy="public",
+            )
+            logger.info("YouTube upload complete: %s", yt_result.get("url", ""))
+        except Exception as e:
+            logger.error("YouTube upload failed: %s", e)
+            logger.info("Video saved locally — upload manually if needed.")
+    else:
+        logger.info("YOUTUBE_REFRESH_TOKEN not set — skipping YouTube upload.")
+        logger.info("Run setup_youtube_auth.py to enable auto-upload.")
+
     # ── Save JSON output alongside ───────────────────────
     _save_run_output(winner, prompts)
 
