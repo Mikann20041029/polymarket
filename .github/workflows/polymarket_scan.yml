@@ -1,24 +1,36 @@
-name: generate-construction-timelapse-short
+name: generate-construction-timelapse-prompts
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Run mode: offline (no API), dry-run (LLM only), generate (full)"
+        description: "Run mode"
         required: false
-        default: "generate"
+        default: "template"
         type: choice
         options:
+          - template
           - offline
           - dry-run
-          - generate
+      template_type:
+        description: "Force specific template (leave empty for random lottery)"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - pool_vehicle
+          - resin_table
+          - fiber_optic_floor
+          - garden_strip
+          - pool_megastructure
   schedule:
     - cron: "0 */12 * * *"
 
 jobs:
-  generate:
+  generate-prompts:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -30,47 +42,35 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Validate API keys
-        if: ${{ github.event.inputs.mode != 'offline' }}
-        run: |
-          test -n "${{ secrets.DEEPSEEK_API_KEY }}" || { echo "::error::Missing DEEPSEEK_API_KEY"; exit 1; }
-          if [ "${{ github.event.inputs.mode || 'generate' }}" = "generate" ]; then
-            test -n "${{ secrets.FAL_KEY }}" || { echo "::error::Missing FAL_KEY (needed for video generation)"; exit 1; }
-            test -n "${{ secrets.ELEVENLABS_API_KEY }}" || { echo "::error::Missing ELEVENLABS_API_KEY (needed for SFX)"; exit 1; }
-          fi
-
-      - name: Generate construction timelapse short
-        timeout-minutes: 35
+      - name: Generate Kling 3.0 prompts
+        timeout-minutes: 5
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          FAL_KEY: ${{ secrets.FAL_KEY }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: |
-          MODE="${{ github.event.inputs.mode || 'generate' }}"
-          if [ "$MODE" = "offline" ]; then
+          MODE="${{ github.event.inputs.mode || 'template' }}"
+          TEMPLATE="${{ github.event.inputs.template_type }}"
+
+          if [ "$MODE" = "template" ]; then
+            if [ -n "$TEMPLATE" ]; then
+              python build_pipeline.py --force-template "$TEMPLATE" --verbose
+            else
+              python build_pipeline.py --template --verbose
+            fi
+          elif [ "$MODE" = "offline" ]; then
             python build_pipeline.py --offline --verbose
-          elif [ "$MODE" = "generate" ]; then
-            python build_pipeline.py --generate --verbose
           else
             python build_pipeline.py --dry-run --verbose
           fi
 
-      - name: Upload generated video
+      - name: Upload prompt output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-short-${{ github.run_number }}
+          name: kling-prompts-${{ github.run_number }}
           path: |
-            output/*.mp4
             output/*.json
           retention-days: 30
           if-no-files-found: warn
