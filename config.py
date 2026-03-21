@@ -33,10 +33,11 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 SCRIPT_MAX_TOKENS = int(os.getenv("SCRIPT_MAX_TOKENS", "4096"))
 
-# ── Wan 2.1 Video Generation via fal.ai ──────────────────
-# Endpoint: fal-ai/wan-t2v
-# Pricing: 480p = $0.20/clip, 720p = $0.40/clip
-FAL_VIDEO_MODEL = os.getenv("FAL_VIDEO_MODEL", "fal-ai/wan-t2v")
+# ── Wan 2.5 Video Generation via fal.ai ──────────────────
+# Endpoint: fal-ai/wan-25-preview/text-to-video
+# Pricing (per second): 480p = $0.05/s, 720p = $0.10/s, 1080p = $0.15/s
+# Budget: 5000 JPY/month ≈ $33 → 480p × ~18.6s avg × 30 days = ~$28/month
+FAL_VIDEO_MODEL = os.getenv("FAL_VIDEO_MODEL", "fal-ai/wan-25-preview/text-to-video")
 WAN_RESOLUTION = os.getenv("WAN_RESOLUTION", "480p")
 CLIPS_PER_VIDEO = int(os.getenv("CLIPS_PER_VIDEO", "5"))
 
