@@ -38,6 +38,7 @@ BASE_DIR = Path(__file__).parent
 CONFIG_PATH = BASE_DIR / "config.yaml"
 HISTORY_PATH = BASE_DIR / "data" / "history.json"
 CATEGORY_STATS_PATH = BASE_DIR / "data" / "category_stats.json"
+ANIMAL_HISTORY_PATH = BASE_DIR / "data" / "animal_history.json"
 
 
 def load_config() -> dict:
@@ -420,6 +421,153 @@ def _save_run_output(scenario: dict, prompts: dict) -> None:
     logging.getLogger("build").info("Run output saved to: %s", path)
 
 
+def _load_animal_history() -> list[dict]:
+    """Load animal selection history."""
+    if ANIMAL_HISTORY_PATH.exists():
+        with open(ANIMAL_HISTORY_PATH) as f:
+            return json.load(f)
+    return []
+
+
+def _save_animal_to_history(history: list[dict], animal_short: str, animal_full: str) -> None:
+    """Save selected animal to history."""
+    ANIMAL_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    history.append({
+        "animal_short": animal_short,
+        "animal_full": animal_full,
+        "date": datetime.now(timezone.utc).isoformat(),
+    })
+    # Keep last 200 entries
+    history = history[-200:]
+    with open(ANIMAL_HISTORY_PATH, "w") as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
+
+
+def run_animal_pov(config: dict) -> None:
+    """Animal POV prompt generation for Kling 3.0.
+
+    Generates 5 copy-paste-ready prompts showing the world from an animal's perspective.
+    Uses weighted selection to reduce probability of recently used animals.
+    """
+    import random
+    from prompts.templates.t6_animal_pov import AnimalPovTemplate
+
+    logger = logging.getLogger("build")
+    logger.info("=== ANIMAL POV → Kling 3.0 Prompts ===")
+
+    template = AnimalPovTemplate()
+    history = _load_animal_history()
+
+    # Calculate animal weights based on history
+    animals = template.get_variable_pools()["_animal_pair"]
+    recent_shorts = [h["animal_short"] for h in history]
+    last_5 = recent_shorts[-5:] if len(recent_shorts) >= 5 else recent_shorts
+    last_10 = recent_shorts[-10:] if len(recent_shorts) >= 10 else recent_shorts
+    last_20 = recent_shorts[-20:] if len(recent_shorts) >= 20 else recent_shorts
+
+    weights = []
+    for animal_tuple in animals:
+        short = animal_tuple[1]
+        w = 1.0
+        if short in last_5:
+            w = 0.3
+        elif short in last_10:
+            w = 0.6
+        elif short in last_20:
+            w = 0.8
+        weights.append(w)
+
+    # Generate with weighted animal selection
+    result = template.generate_weighted(animal_weights=weights)
+
+    # Save to history
+    _save_animal_to_history(
+        history,
+        result["variables"]["animal_short"],
+        result["variables"]["animal"],
+    )
+
+    # Print header
+    print("\n" + "=" * 70)
+    print("  KLING 3.0 PROMPT SET — ANIMAL POV")
+    print("=" * 70)
+    print(f"  Template:  {result['template_name']}")
+    print(f"  Animal:    {result['variables']['animal']} ({result['variables']['biome']})")
+    print(f"  Structure: 5 clips × 5 seconds = 25 seconds total")
+    print(f"  Cost:      50 credits (Standard) / 175 credits (Professional)")
+    print()
+
+    print("  Variables:")
+    for k, val in result["variables"].items():
+        print(f"    {k}: {val}")
+    print()
+
+    # Print prompts
+    print("=" * 70)
+    print("  COPY-PASTE PROMPTS FOR KLING 3.0 — ANIMAL POV")
+    print("  Generate each as 5-second clip, then stitch in CapCut/DaVinci")
+    print("=" * 70)
+
+    neg_prompt = (
+        "blurry, low quality, distorted faces, extra fingers, mutation, "
+        "deformed, ugly, watermark, text overlay, logo, out of frame, "
+        "bad anatomy, bad proportions, duplicate, glitch, noise"
+    )
+
+    for stage in result["stages"]:
+        num = stage["stage"]
+        name = stage["name"].upper()
+        prompt = stage["video_prompt"]
+        print(f"\n{'─' * 70}")
+        print(f"  CLIP {num}/5: {name}")
+        print(f"  Duration: 5 seconds | Aspect: 9:16 vertical | Mode: Standard")
+        print(f"{'─' * 70}")
+        print(f"\n[Prompt]\n{prompt}\n")
+        print(f"[Negative Prompt]\n{neg_prompt}\n")
+    print("=" * 70)
+
+    # Credit summary
+    print(f"\n  CREDIT SUMMARY:")
+    print(f"  Standard mode:      5 clips × 10 credits = 50 credits")
+    print(f"  Professional mode:  5 clips × 35 credits = 175 credits")
+    print()
+
+    # Save output
+    _save_animal_pov_output(result)
+
+    logger.info("=== DONE — Animal POV prompts generated ===")
+
+
+def _save_animal_pov_output(result: dict) -> None:
+    """Save animal POV output."""
+    output_dir = BASE_DIR / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc)
+    animal_short = result["variables"].get("animal_short", "unknown")
+    filename = f"animal_pov_{animal_short}_{now.strftime('%Y%m%d_%H%M%S')}.json"
+
+    output = {
+        "created_at": now.isoformat(),
+        "mode": "animal_pov",
+        "template_id": result["template_id"],
+        "template_name": result["template_name"],
+        "animal": result["variables"].get("animal", ""),
+        "animal_short": animal_short,
+        "biome": result["variables"].get("biome", ""),
+        "total_duration_seconds": result["total_duration_seconds"],
+        "variables": result["variables"],
+        "stages": result["stages"],
+        "status": "planned",
+    }
+
+    path = output_dir / filename
+    with open(path, "w") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    logging.getLogger("build").info("Animal POV output saved to: %s", path)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Kling 3.0 Prompt Generator — Construction Timelapse Luxury Transformation",
@@ -478,6 +626,7 @@ Pro plan ($37/month, 3000 credits): ~60 videos/month (Standard)
         run_offline(config)
     else:
         run_template(config, force_template=args.force_template)
+        run_animal_pov(config)
 
 
 if __name__ == "__main__":
